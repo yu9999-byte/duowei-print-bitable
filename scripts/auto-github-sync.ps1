@@ -47,8 +47,15 @@ function Invoke-Git {
         [int[]]$AllowedExitCodes = @(0)
     )
 
-    $lines = @(& git -C $script:RepoRoot @Arguments 2>&1)
-    $exitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $lines = @(& git -C $script:RepoRoot @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     $output = ($lines | ForEach-Object { "$_" }) -join [Environment]::NewLine
 
     if ($AllowedExitCodes -notcontains $exitCode) {
@@ -70,8 +77,15 @@ function Invoke-ValidationCommand {
         [string[]]$Arguments
     )
 
-    $lines = @(& npm @Arguments 2>&1)
-    $exitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $lines = @(& npm @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($exitCode -ne 0) {
         $output = ($lines | ForEach-Object { "$_" }) -join [Environment]::NewLine
         throw "$Label failed with exit code $exitCode.`n$output"
