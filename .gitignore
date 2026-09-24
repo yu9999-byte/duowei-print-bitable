@@ -1,0 +1,26 @@
+node_modules/
+.codex-tmp/
+record-view/dist/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.local
+
+# Logs and tool output
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+coverage/
+
+# Temporary screenshots
+tmp-screen*.png
+
+# Editor and operating system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
