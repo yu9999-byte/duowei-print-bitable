@@ -136,6 +136,50 @@ function Invoke-ProjectValidation {
     }
 }
 
+function Invoke-PushWithRetry {
+    $delays = @(0, 5, 15)
+    $lastError = $null
+
+    for ($attempt = 0; $attempt -lt $delays.Count; $attempt++) {
+        if ($delays[$attempt] -gt 0) {
+            Write-SyncLog -Level WARN -Message "Push failed; retrying in $($delays[$attempt]) seconds."
+            Start-Sleep -Seconds $delays[$attempt]
+        }
+
+        try {
+            Invoke-Git -Arguments @("push", $Remote, "HEAD:$Branch") | Out-Null
+            return
+        }
+        catch {
+            $lastError = $_
+        }
+    }
+
+    throw $lastError
+}
+
+function Invoke-FetchWithRetry {
+    $delays = @(0, 5, 15)
+    $lastError = $null
+
+    for ($attempt = 0; $attempt -lt $delays.Count; $attempt++) {
+        if ($delays[$attempt] -gt 0) {
+            Write-SyncLog -Level WARN -Message "Fetch failed; retrying in $($delays[$attempt]) seconds."
+            Start-Sleep -Seconds $delays[$attempt]
+        }
+
+        try {
+            Invoke-Git -Arguments @("fetch", $Remote, $Branch, "--quiet") | Out-Null
+            return
+        }
+        catch {
+            $lastError = $_
+        }
+    }
+
+    throw $lastError
+}
+
 function Invoke-AutoSync {
     $gitDirectory = Join-Path $script:RepoRoot ".git"
     if (-not (Test-Path -LiteralPath $gitDirectory)) {
@@ -160,7 +204,7 @@ function Invoke-AutoSync {
         return 0
     }
 
-    Invoke-Git -Arguments @("fetch", $Remote, $Branch, "--quiet") | Out-Null
+    Invoke-FetchWithRetry
     $remoteRef = "refs/remotes/$Remote/$Branch"
     $localHead = (Invoke-Git -Arguments @("rev-parse", "HEAD")).Output
     $remoteHead = (Invoke-Git -Arguments @("rev-parse", "--verify", $remoteRef)).Output
@@ -221,7 +265,7 @@ function Invoke-AutoSync {
         Write-SyncLog -Level INFO -Message "Created commit: $commitMessage"
     }
 
-    Invoke-Git -Arguments @("push", $Remote, "HEAD:$Branch") | Out-Null
+    Invoke-PushWithRetry
     $pushedHead = (Invoke-Git -Arguments @("rev-parse", "HEAD")).Output
     Write-SyncLog -Level INFO -Message "Pushed $pushedHead to $Remote/$Branch."
     return 0

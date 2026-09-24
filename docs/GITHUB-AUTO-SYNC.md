@@ -40,6 +40,6 @@ pwsh -NoProfile -File .\scripts\uninstall-auto-github-sync.ps1
 - 自动提交信息格式：`chore(auto): sync YYYY-MM-DD HH:mm:ss +08:00`
 - 运行日志：`.git/auto-sync.log`
 - 日志超过 1 MB 时只保留末尾 500 行。
-- 推送失败时，已经创建的本地提交会保留；下一轮在远端未分叉的前提下重试推送。
+- 拉取或推送遇到临时网络故障时会重试三次。全部失败后，已经创建的本地提交会保留，下一轮在远端未分叉的前提下继续重试。
 - 发现手动暂存内容时不会接管暂存区。
 - 自动检查不替代 GitHub 分支保护或代码评审。
