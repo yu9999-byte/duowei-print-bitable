@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RepositoryRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$RepositoryRoot,
     [string]$Branch = "main",
     [string]$Remote = "origin",
     [string]$ExpectedRepository = "yu9999-byte/duowei-print-bitable",
@@ -10,6 +10,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+    $RepositoryRoot = Split-Path -Parent $PSScriptRoot
+}
 
 $script:RepoRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
 $script:LogPath = Join-Path $script:RepoRoot ".git\auto-sync.log"
