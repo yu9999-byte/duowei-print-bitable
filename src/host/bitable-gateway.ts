@@ -7,6 +7,17 @@ import {
 import type { NormalizedField } from "../core/print-job.ts";
 import { buildPrintJob, type PrintJob } from "../core/print-job.ts";
 import type { FeishuSelection } from "./feishu-context.ts";
+import {
+  BitableReadTimeoutError,
+  DEFAULT_READ_TIMEOUT_MS,
+  withReadTimeout,
+} from "./read-timeout.ts";
+
+export { BitableReadTimeoutError, DEFAULT_READ_TIMEOUT_MS } from "./read-timeout.ts";
+
+export type LoadPrintJobOptions = {
+  timeoutMs?: number;
+};
 
 function unreadableFieldValue(fieldName: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -39,9 +50,21 @@ function toLinkCellValue(value: unknown, field: IFieldMeta): LinkCellValue {
   };
 }
 
-export async function loadPrintJob(selection: FeishuSelection, recordIds: string[]): Promise<PrintJob> {
-  const table = await bitable.base.getTable(selection.tableId);
-  const [meta, name] = await Promise.all([table.getFieldMetaList(), table.getName()]);
+export async function loadPrintJob(
+  selection: FeishuSelection,
+  recordIds: string[],
+  options: LoadPrintJobOptions = {},
+): Promise<PrintJob> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_READ_TIMEOUT_MS;
+  const table = await withReadTimeout(
+    "获取数据表",
+    bitable.base.getTable(selection.tableId),
+    timeoutMs,
+  );
+  const [meta, name] = await Promise.all([
+    withReadTimeout("获取字段元数据", table.getFieldMetaList(), timeoutMs),
+    withReadTimeout("获取数据表名称", table.getName(), timeoutMs),
+  ]);
   const linkedReaders = new Map<string, Promise<LinkedTableReader>>();
   const linkedColumns = new Map<string, NormalizedField["arrayColumns"]>();
   const fieldCache = new Map<string, ReturnType<typeof table.getFieldById>>();
@@ -53,8 +76,13 @@ export async function loadPrintJob(selection: FeishuSelection, recordIds: string
         readableField = table.getFieldById(field.id);
         fieldCache.set(field.id, readableField);
       }
-      return await (await readableField).getCellString(recordId);
+      return await withReadTimeout(
+        `读取字段“${field.name}”`,
+        (await withReadTimeout(`获取字段“${field.name}”`, readableField, timeoutMs)).getCellString(recordId),
+        timeoutMs,
+      );
     } catch (error) {
+      if (error instanceof BitableReadTimeoutError) throw error;
       return unreadableFieldValue(field.name, error);
     }
   };
@@ -63,20 +91,34 @@ export async function loadPrintJob(selection: FeishuSelection, recordIds: string
     const cached = linkedReaders.get(tableId);
     if (cached) return cached;
     const pending = (async (): Promise<LinkedTableReader> => {
-      const linkedTable = await bitable.base.getTable(tableId);
+      const linkedTable = await withReadTimeout(
+        "获取关联数据表",
+        bitable.base.getTable(tableId),
+        timeoutMs,
+      );
       const linkedTableCompat = linkedTable as typeof linkedTable & {
         getViewList?: () => Promise<Array<{ getFieldMetaList: () => Promise<IFieldMeta[]> }>>;
       };
       const linkedView = linkedTableCompat.getViewList
-        ? (await linkedTableCompat.getViewList())[0]
+        ? (await withReadTimeout("获取关联视图", linkedTableCompat.getViewList(), timeoutMs))[0]
         : await (async () => {
-          const linkedViewMeta = (await linkedTable.getViewMetaList())[0];
-          return linkedViewMeta ? linkedTable.getViewById(linkedViewMeta.id) : undefined;
+          const linkedViewMeta = (await withReadTimeout(
+            "获取关联视图元数据",
+            linkedTable.getViewMetaList(),
+            timeoutMs,
+          ))[0];
+          return linkedViewMeta
+            ? await withReadTimeout("获取关联视图", linkedTable.getViewById(linkedViewMeta.id), timeoutMs)
+            : undefined;
         })();
       if (!linkedView) {
         throw new Error(`关联表缺少可用视图：${tableId}`);
       }
-      const orderedFields = await linkedView.getFieldMetaList();
+      const orderedFields = await withReadTimeout(
+        "获取关联字段元数据",
+        linkedView.getFieldMetaList(),
+        timeoutMs,
+      );
       const fieldCache = new Map<string, ReturnType<typeof linkedTable.getFieldById>>();
       const recordCache = new Map<string, ReturnType<typeof linkedTable.getRecordById>>();
       return {
@@ -89,7 +131,9 @@ export async function loadPrintJob(selection: FeishuSelection, recordIds: string
             linkedRecord = linkedTable.getRecordById(linkedRecordId);
             recordCache.set(linkedRecordId, linkedRecord);
           }
-          if (!await linkedRecord) throw new Error(`关联记录不存在：${linkedRecordId}`);
+          if (!await withReadTimeout("读取关联记录", linkedRecord, timeoutMs)) {
+            throw new Error(`关联记录不存在：${linkedRecordId}`);
+          }
           const fieldName = orderedFields.find((field) => field.id === fieldId)?.name ?? fieldId;
           try {
             let linkedField = fieldCache.get(fieldId);
@@ -97,8 +141,13 @@ export async function loadPrintJob(selection: FeishuSelection, recordIds: string
               linkedField = linkedTable.getFieldById(fieldId);
               fieldCache.set(fieldId, linkedField);
             }
-            return await (await linkedField).getCellString(linkedRecordId);
+            return await withReadTimeout(
+              `读取关联字段“${fieldName}”`,
+              (await withReadTimeout(`获取关联字段“${fieldName}”`, linkedField, timeoutMs)).getCellString(linkedRecordId),
+              timeoutMs,
+            );
           } catch (error) {
+            if (error instanceof BitableReadTimeoutError) throw error;
             return unreadableFieldValue(fieldName, error);
           }
         },
@@ -108,8 +157,12 @@ export async function loadPrintJob(selection: FeishuSelection, recordIds: string
     return pending;
   };
 
-  const records = await Promise.all(recordIds.map(async (recordId) => {
-    const record = await (table.getRecordById as unknown as (id: string, refreshLinkValue?: boolean) => Promise<unknown>)(recordId, true) as {
+  const readRecord = async (recordId: string) => {
+    const record = await withReadTimeout(
+      "读取记录",
+      (table.getRecordById as unknown as (id: string, refreshLinkValue?: boolean) => Promise<unknown>)(recordId, true),
+      timeoutMs,
+    ) as {
       fields: Record<string, unknown>;
     };
     const entries = await Promise.all(meta.map(async (field) => {
@@ -125,11 +178,29 @@ export async function loadPrintJob(selection: FeishuSelection, recordIds: string
       recordId,
       values: Object.fromEntries(entries),
     };
-  }));
+  };
+
+  const records: Awaited<ReturnType<typeof readRecord>>[] = new Array(recordIds.length);
+  let nextIndex = 0;
+  let failure: { reason: unknown } | undefined;
+  const workers = Array.from({ length: Math.min(4, recordIds.length) }, async () => {
+    while (!failure && nextIndex < recordIds.length) {
+      const index = nextIndex++;
+      try {
+        records[index] = await readRecord(recordIds[index]);
+      } catch (reason) {
+        failure ??= { reason };
+      }
+    }
+  });
+  await Promise.all(workers);
+  if (failure) throw failure.reason;
+
   const fields: NormalizedField[] = meta.map((field) => ({
     id: field.id,
     name: field.name,
     type: String(field.type),
+    ...(typeof field.isPrimary === "boolean" ? { isPrimary: field.isPrimary } : {}),
     ...(isLinkField(field) ? {
       isLink: true,
       arrayColumns: linkedColumns.get(field.id) ?? [],

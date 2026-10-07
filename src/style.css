@@ -15,6 +15,10 @@ button { cursor: pointer; }
   body > #duowei-print-root { display: block !important; }
   #duowei-print-root,
   #duowei-print-root * { visibility: visible; }
-  .duowei-print-document { break-after: page; }
-  .duowei-print-document:last-child { break-after: auto; }
+  [data-duowei-print-page="true"] {
+    break-after: page;
+    margin: 0 !important;
+  }
+  [data-duowei-print-page="true"] > :first-child { margin: 0 !important; }
+  [data-duowei-print-page-last="true"] { break-after: auto; }
 }

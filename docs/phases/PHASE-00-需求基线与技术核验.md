@@ -7,7 +7,7 @@
 # 已完成过程
 
 1. 阅读初始 BRD、PRD、TD，发现批量范围、多模板、引擎 API、模板 JSON 和许可证等冲突/假设。
-2. 将三场景均定为 MVP，单活动模板列入 MVP，多模板管理后置；批量必须单次打印任务。
+2. 将三场景均定为 MVP，单活动模板列入当时 MVP 基线，多模板管理后置；批量必须单次打印任务。该模板范围已由 ADR-0009 取代，现行要求为同表多模板集合。
 3. 重写 BRD、PRD、TD，建立项目导航、SPEC、SDD、TEST、TRACE、TODO、CHANGELOG。
 4. 查阅上游 GitHub/Gitee 代码和许可说明；确证 Web Component 与批量 API 在上游 master 存在，但未安装包/宿主验证；记录 ADR-0001。
 5. 建立宿主与存储的 proposed ADR，不将尚未验证的决策写为已完成。

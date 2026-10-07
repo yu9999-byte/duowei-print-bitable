@@ -18,6 +18,16 @@ coverage/
 
 # Temporary screenshots
 tmp-screen*.png
+base-*.png
+competitor-*.png
+ours-live.png
+lark-base-read-*.png
+
+# Local browser and test-run scratch data
+tmp/
+artifacts/chrome-profile-*/
+artifacts/default-headless-*/
+artifacts/default-print-profile/
 
 # Editor and operating system files
 .idea/

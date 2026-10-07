@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh">
+<meta charset="utf-8">
+<title>Print pagination regression fixture</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-width: 320px; }
+  #duowei-print-root { display: none; }
+  @media print {
+    body > * { display: none !important; }
+    body > #duowei-print-root { display: block !important; }
+    #duowei-print-root, #duowei-print-root * { visibility: visible; }
+    .duowei-print-document { break-after: page; }
+    .duowei-print-document > div > div { margin: 0 !important; }
+    .duowei-print-document > div > div:not(:last-child) { break-after: page; }
+    .duowei-print-document:last-child { break-after: auto; }
+  }
+  @page { size: 794px 1123px; margin: 0; }
+</style>
+<div id="duowei-print-root"></div>
+<script>
+  const count = Number(new URL(location.href).searchParams.get("pages") || 1);
+  document.querySelector("#duowei-print-root").innerHTML = Array.from({ length: count }, (_, index) =>
+    `<section class="duowei-print-document"><div style="width:100%;display:flex;flex-direction:column;align-items:center"><div style="position:relative;width:794px;height:1123px;margin:0;background:#fff"><span style="position:absolute;top:20px;left:20px">Record ${index + 1}</span><span style="position:absolute;bottom:0;right:0;background:#d0d0d0">Page edge</span></div></div></section>`
+  ).join("");
+</script>
+</html>

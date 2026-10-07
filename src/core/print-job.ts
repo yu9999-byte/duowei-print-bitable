@@ -10,6 +10,7 @@ export type NormalizedField = {
   id: string;
   name: string;
   type: string;
+  isPrimary?: boolean;
   isLongText?: boolean;
   isLink?: boolean;
   arrayColumns?: Array<{ field: string; header: string; width?: number }>;

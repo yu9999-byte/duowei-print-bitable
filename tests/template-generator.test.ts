@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { performance } from "node:perf_hooks";
 import test from "node:test";
-import { generateTemplate } from "../src/core/template-generator.ts";
+import { generateContinuousTemplate, generateTemplate } from "../src/core/template-generator.ts";
+import { hasContinuousLayout, prepareContinuousLayout } from "../src/core/continuous-layout.ts";
+import { fieldDataSourceId } from "../src/core/data-sources.ts";
 
 const job = {
   table: {
@@ -28,6 +31,45 @@ const job = {
   ],
 } as const;
 
+test("SPEC-PERF-01: pure single-record template generation stays below one second", (context) => {
+  const fields = [
+    ["order", "订单编号", true],
+    ["customer", "客户名称", false],
+    ["product", "商品名称", false],
+    ["quantity", "数量", false],
+    ["price", "单价", false],
+    ["status", "订单状态", false],
+    ["orderedAt", "下单日期", false],
+    ["deliveryAt", "要求送达日期", false],
+    ["address", "收货地址", false],
+    ["phone", "联系电话", false],
+    ["note", "备注", false],
+  ].map(([id, name, isPrimary]) => ({ id: String(id), name: String(name), type: "1", isPrimary: Boolean(isPrimary) }));
+  const values = {
+    订单编号: "PO-0008",
+    客户名称: "南京博远建筑材料有限公司",
+    商品名称: "密封胶条",
+    数量: 200,
+    单价: "¥12.00",
+    订单状态: "待出库",
+    下单日期: "2026-09-21",
+    要求送达日期: "2026-09-30",
+    收货地址: "南京市雨花台区软件大道20号",
+    联系电话: "13200132008",
+    备注: "待出库，等待质检报告",
+  };
+  const startedAt = performance.now();
+  const template = generateTemplate({
+    table: { name: "仓库订单表", fields },
+    documents: [{ recordId: "rec-perf-1", values }],
+  });
+  const elapsedMs = performance.now() - startedAt;
+
+  context.diagnostic(`pure template generation: ${elapsedMs.toFixed(3)} ms; fields=11; records=1; node=${process.version}`);
+  assert.ok(template.pages.length > 0);
+  assert.ok(elapsedMs <= 1_000, `pure template generation took ${elapsedMs.toFixed(3)} ms`);
+});
+
 test("SPEC-TPL-01: generated template uses engine page schema and required sections", () => {
   const template = generateTemplate(job);
   assert.equal(template.pages.length, 1);
@@ -36,12 +78,27 @@ test("SPEC-TPL-01: generated template uses engine page schema and required secti
   assert.deepEqual(types, ["text", "line", "text", "text", "text", "text", "table", "text"]);
 });
 
+test("SPEC-CONT-02: generated continuous template is fixed-height and native-layout ready", () => {
+  const template = generateContinuousTemplate(job);
+  assert.equal(hasContinuousLayout(template), true);
+  assert.equal(template.pages.length, 1);
+  assert.ok(template.canvasSize.height < 1123);
+  assert.ok(template.pages[0].elements.every((element) => element.type !== "table"));
+  assert.ok(template.pages[0].elements.every((element) => element.style.autoHeight !== true));
+  const output = prepareContinuousLayout(template, {
+    ...job,
+    source: { baseId: "base", tableId: "table", recordIds: ["rec-1"] },
+    generatedAt: "2026-09-30T10:00:00.000Z",
+  });
+  assert.equal(output.pageCount, 1);
+});
+
 test("SPEC-TPL-03: short and long fields use distinct layout rows", () => {
   const elements = generateTemplate(job).pages[0].elements;
   const customer = elements.find((element) => element.id === "auto-field-1");
   const note = elements.find((element) => element.id === "auto-long-note");
-  assert.equal(customer?.content, "客户：@客户");
-  assert.equal(note?.content, "备注：@备注");
+  assert.equal(customer?.content, `客户：@${fieldDataSourceId("customer")}`);
+  assert.equal(note?.content, `备注：@${fieldDataSourceId("note")}`);
   assert.ok((note?.width ?? 0) > (customer?.width ?? 0));
   assert.ok((note?.y ?? 0) > (customer?.y ?? 0));
 });
@@ -77,7 +134,7 @@ test("SPEC-BATCH-03: later batch records with long text influence the shared tem
 
 test("SPEC-LINK-01: link field table binds the array variable and columns", () => {
   const table = generateTemplate(job).pages[0].elements.find((element) => element.type === "table");
-  assert.equal(table?.variable, "@明细");
+  assert.equal(table?.variable, `@${fieldDataSourceId("lines")}`);
   assert.deepEqual(table?.columns, [
     { field: "product", header: "产品", width: 180 },
     { field: "qty", header: "数量", width: 80 },
@@ -90,8 +147,8 @@ test("SPEC-LINK-03: an empty linked table has a separate variable-driven empty s
   const emptyState = template.pages[0].elements.find((element) => element.id === "auto-link-empty-lines");
   assert.equal(emptyState?.variable, "@__duowei_print_empty_lines");
   const fieldSources = template.ext.availableVariables.find((group) => group.label === "字段");
-  assert.deepEqual(fieldSources?.children.find((source) => source.id === "明细"), {
-    id: "明细",
+  assert.deepEqual(fieldSources?.children.find((source) => source.id === fieldDataSourceId("lines")), {
+    id: fieldDataSourceId("lines"),
     label: "明细",
     isArray: true,
   });

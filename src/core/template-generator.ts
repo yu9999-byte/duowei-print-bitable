@@ -1,13 +1,14 @@
 import type { PrintJob, NormalizedField, PrintableValue } from "./print-job.ts";
 import {
   buildDataSourceCatalog,
+  fieldDataSourceId,
   SYSTEM_PRINT_DATE_ID,
   type DesignerDataSourceGroup,
 } from "./data-sources.ts";
 
 export type TemplateElement = {
   id: string;
-  type: "text" | "table" | "line";
+  type: "text" | "table" | "line" | "multiLabel";
   x: number;
   y: number;
   width: number;
@@ -25,7 +26,11 @@ export type DesignerTemplate = {
   unit: "px";
   showGrid: boolean;
   allowDragOutsideCanvas: boolean;
-  ext: { availableVariables: DesignerDataSourceGroup[] };
+  ext: {
+    availableVariables: DesignerDataSourceGroup[];
+    fieldBindings: Record<string, string>;
+    batchLayout?: "continuous";
+  };
 };
 
 const PAGE_WIDTH = 794;
@@ -40,6 +45,95 @@ const variable = (name: string) => "@" + name;
 const autoId = (prefix: string, index: number) => "auto-" + prefix + "-" + (index + 1);
 const LONG_TEXT_THRESHOLD = 60;
 
+export function generateLabelTemplate(job: Pick<PrintJob, "table" | "documents">): DesignerTemplate {
+  const fields = job.table.fields.filter((field) => !field.isLink && !field.arrayColumns);
+  if (!fields.length) throw new Error("当前表没有适合放入标签的普通字段");
+  const selected = [fields.find((field) => field.isPrimary) ?? fields[0]];
+  const second = fields.find((field) => field.id !== selected[0].id);
+  if (second) selected.push(second);
+  const content = selected.map((field) => `${field.name}：${variable(fieldDataSourceId(field.id))}`).join("\n");
+  return {
+    pages: [{ id: "label-page-1", elements: [
+      {
+        id: "label-grid", type: "multiLabel", x: 48, y: 48, width: 230, height: 160,
+        rows: 3, cols: 2, gapX: 12, gapY: 12, direction: "row", dataVariable: "@labels",
+        printable: true,
+        style: { backgroundColor: "transparent", borderColor: "#9ca3af", borderStyle: "solid", borderWidth: 1 },
+      },
+      {
+        id: "label-summary", type: "text", x: 60, y: 68, width: 205, height: 100,
+        content, variable: variable(fieldDataSourceId(selected[0].id)), printable: true,
+        style: { fontSize: 16, color: "#202124", backgroundColor: "transparent",
+          borderColor: "transparent", textAlign: "left", verticalAlign: "middle" },
+      },
+    ] }],
+    canvasSize: { width: PAGE_WIDTH, height: PAGE_HEIGHT },
+    unit: "px", showGrid: true, allowDragOutsideCanvas: false,
+    ext: {
+      availableVariables: buildDataSourceCatalog(job.table.fields),
+      fieldBindings: Object.fromEntries(job.table.fields.map((field) => [field.id, field.name])),
+    },
+  };
+}
+
+export function generateContinuousTemplate(job: Pick<PrintJob, "table" | "documents">): DesignerTemplate {
+  const fields = job.table.fields.filter((field) => !field.isLink && !field.arrayColumns);
+  if (!fields.length) throw new Error("当前表没有适合连续排版的普通字段");
+  const elements: TemplateElement[] = [];
+  let y = 28;
+  elements.push({
+    id: "continuous-title",
+    type: "text",
+    x: SIDE_MARGIN,
+    y,
+    width: CONTENT_WIDTH,
+    height: 34,
+    content: `${job.table.name}打印单`,
+    printable: true,
+    style: { fontSize: 20, fontWeight: "bold", color: "#111827", backgroundColor: "transparent",
+      borderColor: "transparent", textAlign: "center", verticalAlign: "middle" },
+  });
+  y += 46;
+  elements.push(line(y, "continuous-divider"));
+  y += 22;
+
+  for (let index = 0; index < fields.length; index += 2) {
+    elements.push(fieldText(fields[index], index, SIDE_MARGIN, y));
+    if (fields[index + 1]) {
+      elements.push(fieldText(fields[index + 1], index + 1, SIDE_MARGIN + FIELD_WIDTH + 24, y));
+    }
+    y += FIELD_HEIGHT + ROW_GAP;
+  }
+
+  const printedAtToken = variable(SYSTEM_PRINT_DATE_ID);
+  elements.push({
+    id: "continuous-printed-at",
+    type: "text",
+    x: SIDE_MARGIN,
+    y: y + 4,
+    width: CONTENT_WIDTH,
+    height: 24,
+    content: `打印日期：${printedAtToken}`,
+    variable: printedAtToken,
+    printable: true,
+    style: { fontSize: 12, color: "#4b5563", backgroundColor: "transparent",
+      borderColor: "transparent", textAlign: "right", verticalAlign: "middle" },
+  });
+  const canvasHeight = y + 56;
+  return {
+    pages: [{ id: "continuous-page-1", elements }],
+    canvasSize: { width: PAGE_WIDTH, height: canvasHeight },
+    unit: "px",
+    showGrid: true,
+    allowDragOutsideCanvas: false,
+    ext: {
+      batchLayout: "continuous",
+      availableVariables: buildDataSourceCatalog(job.table.fields),
+      fieldBindings: Object.fromEntries(job.table.fields.map((field) => [field.id, field.name])),
+    },
+  };
+}
+
 function isLongField(field: NormalizedField, documents: PrintJob["documents"]): boolean {
   if (field.isLongText !== undefined) return field.isLongText;
   return documents.some((document) => {
@@ -50,7 +144,7 @@ function isLongField(field: NormalizedField, documents: PrintJob["documents"]): 
 }
 
 function fieldText(field: NormalizedField, index: number, x: number, y: number): TemplateElement {
-  const token = variable(field.name);
+  const token = variable(fieldDataSourceId(field.id));
   return {
     id: autoId("field", index),
     type: "text",
@@ -165,7 +259,7 @@ export function generateTemplate(job: Pick<PrintJob, "table" | "documents">): De
 
   for (const field of longFields) {
     ensureSpace(70);
-    const token = variable(field.name);
+    const token = variable(fieldDataSourceId(field.id));
     elements.push({
       id: "auto-long-" + field.id,
       type: "text",
@@ -192,7 +286,7 @@ export function generateTemplate(job: Pick<PrintJob, "table" | "documents">): De
 
   linkFields.forEach((field) => {
     ensureSpace(306);
-    const token = variable(field.name);
+    const token = variable(fieldDataSourceId(field.id));
     const emptyStateToken = variable("__duowei_print_empty_" + field.id);
     const columns = field.arrayColumns?.length
       ? field.arrayColumns
@@ -285,6 +379,7 @@ export function generateTemplate(job: Pick<PrintJob, "table" | "documents">): De
     allowDragOutsideCanvas: false,
     ext: {
       availableVariables: buildDataSourceCatalog(fields),
+      fieldBindings: Object.fromEntries(fields.map((field) => [field.id, field.name])),
     },
   };
 }

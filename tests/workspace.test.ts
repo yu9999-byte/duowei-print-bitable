@@ -3,8 +3,13 @@ import test from "node:test";
 import {
   EDITOR_PANELS,
   getTemplateStatus,
+  getTemplateDirtyState,
+  getWorkspaceSurface,
   initialWorkspaceMode,
   canEnterTemplateEdit,
+  contextDecisionCancelStatus,
+  modeAfterDiscardForLoadRequest,
+  shouldIgnorePendingSelectionChange,
   shouldGuardUnsavedNavigation,
   toggleWorkspaceMode,
   type TemplateStatusInput,
@@ -14,6 +19,13 @@ test("SPEC-UX-01: a loaded workspace starts in print preview and enters edit exp
   assert.equal(initialWorkspaceMode(), "preview");
   assert.equal(toggleWorkspaceMode("preview"), "edit");
   assert.equal(toggleWorkspaceMode("edit"), "preview");
+});
+
+test("SPEC-BATCH-08: a committed batch always exposes the batch preview surface", () => {
+  assert.equal(getWorkspaceSurface("preview", false), "single-preview");
+  assert.equal(getWorkspaceSurface("edit", false), "single-edit");
+  assert.equal(getWorkspaceSurface("preview", true), "batch-preview");
+  assert.equal(getWorkspaceSurface("edit", true), "batch-preview");
 });
 
 test("SPEC-UX-02: template status distinguishes automatic, saved, fallback, and unsaved states", () => {
@@ -29,8 +41,8 @@ test("SPEC-UX-02: template status distinguishes automatic, saved, fallback, and 
   }
 });
 
-test("SPEC-UX-03: the editor exposes the four MVP entry points in a stable order", () => {
-  assert.deepEqual(EDITOR_PANELS, ["data-sources", "components", "page-settings", "settings"]);
+test("SPEC-UX-03: only actionable data sources and components are exposed", () => {
+  assert.deepEqual(EDITOR_PANELS, ["data-sources", "components"]);
 });
 
 test("SPEC-UX-04: editing requires an explicitly selected loaded template", () => {
@@ -42,4 +54,47 @@ test("SPEC-UX-04: editing requires an explicitly selected loaded template", () =
 test("SPEC-UX-05/SPEC-SAVE-03: dirty navigation always requires a decision", () => {
   assert.equal(shouldGuardUnsavedNavigation(false), false);
   assert.equal(shouldGuardUnsavedNavigation(true), true);
+});
+
+test("SPEC-UX-05/SPEC-SAVE-03: a new unsaved template stays dirty even with identical canvas data", () => {
+  assert.equal(getTemplateDirtyState({ hasDraft: true, baseline: "same", snapshot: "same", dirty: true }), true);
+  assert.equal(getTemplateDirtyState({ hasDraft: false, baseline: "old", snapshot: "new", dirty: false }), true);
+  assert.equal(getTemplateDirtyState({ hasDraft: false, baseline: "same", snapshot: "same", dirty: true }), false);
+  assert.equal(getTemplateDirtyState({ hasDraft: false, baseline: "old", snapshot: "", dirty: true }), true);
+});
+
+test("SPEC-BATCH-08: continuing an explicit batch request must not claim the host switched", () => {
+  assert.equal(contextDecisionCancelStatus("batch"), "已保留当前模板草稿");
+  assert.equal(contextDecisionCancelStatus("current"), "已保留当前模板草稿");
+  assert.match(contextDecisionCancelStatus(null), /宿主记录已切换/);
+});
+
+test("SPEC-BATCH-08: transient selection events do not clear an explicit load request", () => {
+  const current = { baseId: "base", tableId: "table", viewId: "view", recordId: "rec-1" };
+  assert.equal(shouldIgnorePendingSelectionChange({
+    hasPendingExplicitLoad: true,
+    current,
+    incoming: { baseId: "base", tableId: "table", viewId: "view", recordId: null },
+  }), true);
+  assert.equal(shouldIgnorePendingSelectionChange({
+    hasPendingExplicitLoad: true,
+    current,
+    incoming: { baseId: "base", tableId: "table", viewId: "view", recordId: "rec-1" },
+  }), true);
+  assert.equal(shouldIgnorePendingSelectionChange({
+    hasPendingExplicitLoad: true,
+    current,
+    incoming: { baseId: "base", tableId: "table", viewId: "view", recordId: "rec-2" },
+  }), false);
+  assert.equal(shouldIgnorePendingSelectionChange({
+    hasPendingExplicitLoad: false,
+    current,
+    incoming: { baseId: "base", tableId: "table", viewId: "view", recordId: null },
+  }), false);
+});
+
+test("SPEC-BATCH-08: explicitly discarding a draft leaves a printable single preview before picking", () => {
+  assert.equal(modeAfterDiscardForLoadRequest("batch", "edit"), "preview");
+  assert.equal(modeAfterDiscardForLoadRequest("exit", "edit"), "preview");
+  assert.equal(modeAfterDiscardForLoadRequest("current", "edit"), "edit");
 });
