@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { bitable } from "@lark-base-open/js-sdk";
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   bindPrintJob,
   bindStoredTemplateOrFallback,
@@ -47,11 +47,11 @@ import {
   SYSTEM_PRINT_DATE_ID,
 } from "./core/data-sources.ts";
 import type { StoredTemplate, TemplateCollection } from "./core/template-repository.ts";
-import { BatchStatus } from "./components/batch-status.ts";
 import {
   getBatchReadFailureFeedback,
 } from "./components/batch-read-feedback.ts";
 import { getBatchWorkspaceActionState } from "./components/batch-workspace-action-state.ts";
+import { getWorkspacePresentation } from "./components/workspace-presentation.ts";
 import {
   canEnterTemplateEdit,
   contextDecisionCancelStatus,
@@ -98,8 +98,13 @@ const renderedPages = ref<RenderedPrintJob | null>(null);
 const status = ref("正在读取当前记录…");
 const error = ref("");
 const busy = ref(false);
+const activeTemplateMenuId = ref<string | null>(null);
+const newTemplateMenuOpen = ref(false);
+const editMoreMenuOpen = ref(false);
+const statusToastVisible = ref(false);
 let contextRevision = 0;
 let candidateRender: Promise<RenderedPrintJob> | null = null;
+let statusToastTimer: ReturnType<typeof setTimeout> | undefined;
 let stopSelectionWatch: (() => void) | undefined;
 let stopDataSourceTerminology: (() => void) | undefined;
 let stopDataSourceEditingLifecycle: (() => void) | undefined;
@@ -134,6 +139,8 @@ const currentTemplateName = computed(() => draftTemplateId.value
   ? draftTemplateName.value
   : templateCollection.value.templates.find((item) => item.id === selectedTemplateId.value)?.name
     ?? (printJob.value?.table.name ? `${printJob.value.table.name} · 自动模板` : "自动模板"));
+const visibleTemplateCount = computed(() => templateCollection.value.templates.length
+  + ((!templateCollection.value.templates.length || selectedTemplateId.value === "automatic") ? 1 : 0));
 const templateSelected = computed(() => templateLoaded.value && Boolean(selectedTemplateId.value));
 const fieldDataSources = computed(() => printJob.value?.table.fields ?? []);
 const batchWorkspaceActions = computed(() => getBatchWorkspaceActionState({
@@ -154,8 +161,56 @@ const currentRecordLabel = computed(() => {
 });
 const isBatchMode = computed(() => batchWorkspaceActions.value.isBatchMode);
 const workspaceSurface = computed(() => getWorkspaceSurface(workspaceMode.value, isBatchMode.value));
+const presentation = computed(() => getWorkspacePresentation(workspaceSurface.value));
 const showBatchRetry = computed(() => batchWorkspaceActions.value.retryVisible);
 const previewFrameHeight = computed(() => `${renderedPages.value ? renderedPreviewHeight(renderedPages.value) : 1040}px`);
+const hasFeedbackError = computed(() => Boolean(error.value || templateWarning.value || previewError.value));
+const showStatusFeedback = computed(() => busy.value
+  || hasFeedbackError.value
+  || showBatchRetry.value
+  || statusToastVisible.value);
+
+watch(status, () => {
+  statusToastVisible.value = true;
+  if (statusToastTimer) clearTimeout(statusToastTimer);
+  statusToastTimer = setTimeout(() => {
+    statusToastVisible.value = false;
+  }, 2600);
+});
+
+function closeTransientMenus() {
+  activeTemplateMenuId.value = null;
+  newTemplateMenuOpen.value = false;
+  editMoreMenuOpen.value = false;
+}
+
+function toggleTemplateMenu(id: string) {
+  newTemplateMenuOpen.value = false;
+  editMoreMenuOpen.value = false;
+  activeTemplateMenuId.value = activeTemplateMenuId.value === id ? null : id;
+}
+
+function toggleNewTemplateMenu() {
+  activeTemplateMenuId.value = null;
+  editMoreMenuOpen.value = false;
+  newTemplateMenuOpen.value = !newTemplateMenuOpen.value;
+}
+
+function toggleEditMoreMenu() {
+  activeTemplateMenuId.value = null;
+  newTemplateMenuOpen.value = false;
+  editMoreMenuOpen.value = !editMoreMenuOpen.value;
+}
+
+function handleGlobalPointerDown(event: PointerEvent) {
+  const target = event.target;
+  if (target instanceof Element && target.closest(".menu-anchor")) return;
+  closeTransientMenus();
+}
+
+function handleGlobalKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") closeTransientMenus();
+}
 
 async function waitForDesignerReady() {
   if (designerReady.value) return;
@@ -506,6 +561,7 @@ function markDesignerReady() {
   stopDesignerTemplatePanelSuppression?.();
   stopDesignerWorkspaceChrome?.();
   if (designerRef.value) {
+    designerRef.value.setTheme?.("light");
     stopDataSourceTerminology = installDataSourceTerminology(designerRef.value);
     stopDataSourceEditingLifecycle = installDataSourceEditingLifecycle(designerRef.value, {
       onChange: refreshTemplateDirtyState,
@@ -535,6 +591,7 @@ async function previewOutput() {
 
 async function saveTemplate(options: { returnToPreview?: boolean; allowContextChange?: boolean } = {}): Promise<boolean> {
   if (isBatchMode.value || !designerRef.value || !selection.value || !templateSaveAllowed.value) return false;
+  closeTransientMenus();
   const active = selection.value;
   const revision = contextRevision;
   busy.value = true;
@@ -586,6 +643,7 @@ function templateLayoutLabel(template: unknown) {
 
 async function createTemplate(kind: NewTemplateKind = "default") {
   if (isBatchMode.value || !designerRef.value || !printJob.value || !templateLoaded.value) return;
+  closeTransientMenus();
   busy.value = true;
   error.value = "";
   try {
@@ -615,11 +673,13 @@ async function createTemplate(kind: NewTemplateKind = "default") {
 
 async function selectTemplate(id: string) {
   if (isBatchMode.value || !templateLoaded.value || selectedTemplateId.value === id || !selection.value) return;
+  closeTransientMenus();
   await loadTemplateAndPreview(printJob.value, selection.value, contextRevision, id);
 }
 
 async function updateDirectory(action: "rename" | "remove" | "default", item: StoredTemplate) {
   if (isBatchMode.value || !selection.value || busy.value) return;
+  closeTransientMenus();
   const name = action === "rename" ? window.prompt("模板名称", item.name)?.trim() : null;
   if (action === "rename" && (!name || name === item.name)) return;
   if (action === "remove" && !window.confirm(`删除模板“${item.name}”？此操作不能撤销。`)) return;
@@ -661,6 +721,7 @@ function enterEditMode() {
     status.value = "请先在模板目录中选择模板";
     return;
   }
+  closeTransientMenus();
   workspaceMode.value = "edit";
   renderedPages.value = null;
   previewHtml.value = "";
@@ -677,6 +738,7 @@ async function applyPreviewMode(): Promise<boolean> {
 }
 
 function requestPreviewMode() {
+  closeTransientMenus();
   if (workspaceMode.value !== "edit") {
     void refreshPreview();
     return;
@@ -689,6 +751,7 @@ function requestPreviewMode() {
 }
 
 function requestTemplateReload() {
+  closeTransientMenus();
   if (shouldGuardUnsavedNavigation(refreshTemplateDirtyState())) {
     decisionDialog.value = "reload";
     return;
@@ -883,6 +946,8 @@ async function exportPdf() {
 
 onMounted(() => {
   window.addEventListener("duowei-print:designer-load-error", handleDesignerLoadError);
+  document.addEventListener("pointerdown", handleGlobalPointerDown);
+  document.addEventListener("keydown", handleGlobalKeydown);
   stopDesignerPrintInterception = installDesignerPrintInterception(window, () => {
     void printOutput();
   });
@@ -919,6 +984,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("duowei-print:designer-load-error", handleDesignerLoadError);
+  document.removeEventListener("pointerdown", handleGlobalPointerDown);
+  document.removeEventListener("keydown", handleGlobalKeydown);
+  if (statusToastTimer) clearTimeout(statusToastTimer);
   stopSelectionWatch?.();
   stopDataSourceTerminology?.();
   stopDataSourceEditingLifecycle?.();
@@ -931,39 +999,59 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="app-shell">
-    <header class="app-header">
-      <div class="brand-block">
-        <p class="eyebrow">飞书多维表格 · 记录视图插件</p>
+  <main class="app-shell" :class="`surface-${workspaceSurface}`">
+    <header v-if="presentation.showBrand" class="app-header">
+      <div class="brand-block" aria-label="多维打印">
+        <span class="brand-mark" aria-hidden="true">印</span>
         <h1>多维打印</h1>
       </div>
       <div class="header-context">
         <span>{{ printJob?.table.name || "正在读取数据表" }}</span>
-        <span class="context-divider">/</span>
+        <span class="context-divider" aria-hidden="true">/</span>
         <span>{{ currentRecordLabel }}</span>
       </div>
       <div class="header-actions">
-        <button v-if="!isBatchMode" class="button button-quiet" :disabled="busy" @click="requestLoadRecords(false)">
-          {{ busy ? "读取中…" : "重新读取" }}
-        </button>
-        <button class="button button-quiet" :disabled="busy || !templateLoaded" @click="requestLoadRecords(true)">
+        <button v-if="presentation.showRecordPicker" class="button button-secondary button-record-picker"
+          :disabled="busy || !templateLoaded" @click="requestLoadRecords(true)">
           {{ batchWorkspaceActions.selectLabel }}
         </button>
-        <button v-if="isBatchMode" class="button button-quiet" :disabled="busy" @click="requestExitBatch">退出批量</button>
-        <button :disabled="batchWorkspaceActions.outputDisabled" class="button button-outline" @click="printOutput">
-          {{ batchWorkspaceActions.printLabel }}
-        </button>
-        <button :disabled="batchWorkspaceActions.outputDisabled" class="button button-outline" @click="exportPdf">
+        <button v-if="presentation.showExitBatch" class="button button-tertiary" :disabled="busy"
+          @click="requestExitBatch">退出批量</button>
+        <button v-if="presentation.showOutputs" :disabled="batchWorkspaceActions.outputDisabled"
+          class="button button-secondary" @click="exportPdf">
           {{ batchWorkspaceActions.exportPdfLabel }}
+        </button>
+        <button v-if="presentation.showOutputs" class="button button-primary" :disabled="batchWorkspaceActions.outputDisabled" @click="printOutput">
+          {{ batchWorkspaceActions.printLabel }}
         </button>
       </div>
     </header>
 
-    <BatchStatus v-if="isBatchMode" :summaries="batchWorkspaceActions.summaries"
-      :layout="renderedPages?.layout ?? 'default'" />
+    <header v-else class="app-header app-header-edit">
+      <button class="button button-tertiary back-button" :disabled="busy" @click="requestPreviewMode">
+        <span aria-hidden="true">←</span> 返回预览
+      </button>
+      <div class="edit-header-context">
+        <strong>{{ currentTemplateName }}</strong>
+        <span class="status-chip" :class="`status-${templateStatus}`">{{ templateStatusLabel }}</span>
+      </div>
+      <div class="header-actions">
+        <div class="menu-anchor edit-more-anchor">
+          <button class="button button-tertiary" type="button" aria-haspopup="menu"
+            :aria-expanded="editMoreMenuOpen" @click="toggleEditMoreMenu">更多</button>
+          <div v-if="editMoreMenuOpen" class="action-menu action-menu-right" role="menu">
+            <button class="action-menu-item" role="menuitem" :disabled="busy || !designerReady || !printJob"
+              @click="requestTemplateReload">重新加载模板</button>
+          </div>
+        </div>
+        <button v-if="presentation.showSave" class="button button-primary"
+          :disabled="busy || !templateSaveAllowed" @click="saveTemplate()">保存模板</button>
+      </div>
+    </header>
 
-    <div class="status-line" :class="{ 'status-line-error': error || templateWarning || previewError }">
-      <span class="status-dot" aria-hidden="true"></span>
+    <div v-if="showStatusFeedback" class="status-line" :class="{ 'status-line-error': hasFeedbackError }"
+      :role="hasFeedbackError ? 'alert' : 'status'" aria-live="polite">
+      <span class="status-indicator" aria-hidden="true"></span>
       <span>{{ status }}</span>
       <span v-if="templateWarning">模板：{{ templateWarning }}</span>
       <span v-if="previewError">预览：{{ previewError }}</span>
@@ -973,140 +1061,140 @@ onBeforeUnmount(() => {
     </div>
 
     <section class="workspace" :class="`workspace-${workspaceMode}`">
-      <aside class="sidebar" :aria-label="workspaceSurface === 'batch-preview' ? '批量预览' : workspaceSurface === 'single-preview' ? '模板目录' : '编辑操作区'">
-        <div v-if="workspaceSurface === 'batch-preview'" class="sidebar-section batch-preview-sidebar">
+      <aside class="sidebar" :aria-label="presentation.showBatchSummary ? '批量预览' : presentation.showTemplateDirectory ? '模板目录' : '编辑操作区'">
+        <section v-if="presentation.showBatchSummary" class="sidebar-section batch-preview-sidebar">
           <div class="sidebar-title-row">
-            <span class="sidebar-title">批量预览</span>
-            <span class="sidebar-count">{{ batchSession.committedRecordIds.length }} 条</span>
+            <span class="sidebar-title">本次打印</span>
+            <span class="readonly-tag">只读</span>
           </div>
-          <strong>{{ currentTemplateName }}</strong>
-          <span class="batch-preview-sidebar-note">{{ renderedLayoutLabel }}</span>
-          <span class="batch-preview-sidebar-note">当前批次只读，模板调整请先退出批量</span>
-        </div>
+          <div class="batch-count"><strong>{{ batchSession.committedRecordIds.length }}</strong><span>条记录</span></div>
+          <dl class="batch-metadata">
+            <div><dt>模板</dt><dd>{{ currentTemplateName }}</dd></div>
+            <div><dt>排版</dt><dd>{{ renderedLayoutLabel }}</dd></div>
+          </dl>
+          <ul class="batch-record-list" aria-label="已选择记录">
+            <li v-for="summary in batchWorkspaceActions.summaries.slice(0, 5)" :key="summary.recordId">
+              <span>{{ summary.label }}</span>
+            </li>
+          </ul>
+          <span v-if="batchWorkspaceActions.summaries.length > 5" class="batch-remainder">
+            另有 {{ batchWorkspaceActions.summaries.length - 5 }} 条记录
+          </span>
+        </section>
 
-        <div v-if="workspaceSurface === 'single-preview'" class="sidebar-section template-section">
+        <section v-if="presentation.showTemplateDirectory" class="sidebar-section template-section">
           <div class="sidebar-title-row">
-            <span class="sidebar-title">模板目录</span>
-            <span class="sidebar-count">{{ templateCollection.templates.length }} 个</span>
+            <span class="sidebar-title">模板</span>
+            <span class="sidebar-count">{{ visibleTemplateCount }} 个</span>
           </div>
-          <button
-            v-if="!templateCollection.templates.length || selectedTemplateId === 'automatic'"
-            class="template-item"
-            :class="{ 'template-item-active': selectedTemplateId === 'automatic' }"
-            :disabled="!templateLoaded"
-            @click="selectTemplate('automatic')"
-          >
-            <span class="template-item-mark" aria-hidden="true"></span>
-            <span class="template-item-copy">
-              <strong>自动模板</strong>
-              <small>{{ templateFallback ? '只读回退' : '未保存' }}</small>
-            </span>
-          </button>
-          <div v-for="item in templateCollection.templates" :key="item.id" class="template-directory-row">
-            <button class="template-item" :class="{ 'template-item-active': selectedTemplateId === item.id }"
-              :disabled="busy" @click="selectTemplate(item.id)">
-              <span class="template-item-mark" aria-hidden="true"></span>
-              <span class="template-item-copy"><strong>{{ item.name }}</strong>
-                <small>{{ templateLayoutLabel(item.template) }} · {{ item.id === templateCollection.defaultId ? '默认模板' : '已保存' }}</small></span>
+          <div class="template-list">
+            <button
+              v-if="!templateCollection.templates.length || selectedTemplateId === 'automatic'"
+              class="template-item"
+              :class="{ 'template-item-active': selectedTemplateId === 'automatic' }"
+              :disabled="!templateLoaded"
+              @click="selectTemplate('automatic')"
+            >
+              <span class="template-item-copy">
+                <strong>自动模板</strong>
+                <small>{{ templateFallback ? '只读回退' : '未保存' }}</small>
+              </span>
             </button>
-            <div class="template-item-actions">
-              <button title="重命名" :disabled="busy" @click="updateDirectory('rename', item)">重命名</button>
-              <button v-if="item.id !== templateCollection.defaultId" title="设为默认" :disabled="busy"
-                @click="updateDirectory('default', item)">设默认</button>
-              <button title="删除" :disabled="busy || (item.id === templateCollection.defaultId && templateCollection.templates.length > 1)"
-                @click="updateDirectory('remove', item)">删除</button>
+            <div v-for="item in templateCollection.templates" :key="item.id" class="template-directory-row"
+              :class="{ 'template-directory-row-active': selectedTemplateId === item.id }">
+              <button class="template-item" :class="{ 'template-item-active': selectedTemplateId === item.id }"
+                :disabled="busy" @click="selectTemplate(item.id)">
+                <span class="template-item-copy">
+                  <strong>{{ item.name }}</strong>
+                  <small>
+                    <span class="template-layout-label">{{ templateLayoutLabel(item.template) }}</span>
+                    <span v-if="item.id === templateCollection.defaultId" class="default-tag">默认</span>
+                  </small>
+                </span>
+              </button>
+              <div class="menu-anchor template-more-anchor">
+                <button class="template-more-button" type="button" aria-haspopup="menu"
+                  :aria-expanded="activeTemplateMenuId === item.id" :aria-label="`${item.name}的更多操作`"
+                  :disabled="busy" @click.stop="toggleTemplateMenu(item.id)">···</button>
+                <div v-if="activeTemplateMenuId === item.id" class="action-menu template-action-menu" role="menu">
+                  <button class="action-menu-item" role="menuitem" :disabled="busy"
+                    @click="updateDirectory('rename', item)">重命名</button>
+                  <button v-if="item.id !== templateCollection.defaultId" class="action-menu-item" role="menuitem"
+                    :disabled="busy" @click="updateDirectory('default', item)">设为默认模板</button>
+                  <button class="action-menu-item action-menu-danger" role="menuitem"
+                    :disabled="busy || (item.id === templateCollection.defaultId && templateCollection.templates.length > 1)"
+                    @click="updateDirectory('remove', item)">删除模板</button>
+                </div>
+              </div>
             </div>
           </div>
-          <button
-            class="button button-new-template"
-            :disabled="busy || !templateLoaded || !templateSaveAllowed"
-            @click="createTemplate('default')"
-          >
-            <span aria-hidden="true">＋</span>
-            新建模板
-          </button>
-          <button class="button button-new-template" :disabled="busy || !templateLoaded || !templateSaveAllowed"
-            @click="createTemplate('continuous')">
-            <span aria-hidden="true">＋</span>
-            新建连续模板
-          </button>
-          <button class="button button-new-template" :disabled="busy || !templateLoaded || !templateSaveAllowed"
-            @click="createTemplate('labels')">
-            <span aria-hidden="true">＋</span>
-            新建标签模板
-          </button>
-        </div>
-
-        <nav v-if="workspaceSurface === 'single-edit'" class="sidebar-section editor-nav" aria-label="编辑入口">
-          <div class="sidebar-title-row">
-            <span class="sidebar-title">编辑入口</span>
-            <span class="sidebar-count">{{ EDITOR_PANELS.length }}</span>
+          <div class="template-create menu-anchor">
+            <button class="button button-secondary button-new-template" type="button" aria-haspopup="menu"
+              :aria-expanded="newTemplateMenuOpen" :disabled="busy || !templateLoaded || !templateSaveAllowed"
+              @click="toggleNewTemplateMenu">
+              <span aria-hidden="true">＋</span> 新建模板
+            </button>
+            <div v-if="newTemplateMenuOpen" class="action-menu template-create-menu" role="menu">
+              <button class="action-menu-item" role="menuitem" @click="createTemplate('default')">
+                <span><strong>默认模板</strong><small>每条记录从新页开始</small></span>
+              </button>
+              <button class="action-menu-item" role="menuitem" @click="createTemplate('continuous')">
+                <span><strong>连续模板</strong><small>多条记录纵向连续排版</small></span>
+              </button>
+              <button class="action-menu-item" role="menuitem" @click="createTemplate('labels')">
+                <span><strong>标签模板</strong><small>按行列网格排列标签</small></span>
+              </button>
+            </div>
           </div>
-          <button
-            v-for="panel in EDITOR_PANELS"
-            :key="panel"
-            class="editor-nav-item"
-            :class="{ 'editor-nav-item-active': activeEditorPanel === panel }"
-            @click="selectEditorPanel(panel)"
-          >
-            <span class="editor-nav-index">{{ EDITOR_PANELS.indexOf(panel) + 1 }}</span>
-            <span>{{ editorPanelLabels[panel] }}</span>
-          </button>
-        </nav>
+        </section>
 
-        <div v-if="workspaceSurface === 'single-edit' && activeEditorPanel === 'data-sources'" class="sidebar-section editor-content">
-          <strong>字段</strong>
-          <button v-for="field in fieldDataSources" :key="field.id" class="data-source-row" type="button"
-            :aria-label="`复制数据源 ${field.name}`"
-            @click="copyDataSource({ id: fieldDataSourceId(field.id), label: field.name })">
-            <span>{{ field.name }}</span><small>{{ field.isLink || field.arrayColumns ? '复制 Token' : '复制' }}</small>
-          </button>
-          <span v-if="!fieldDataSources.length" class="empty-copy">当前表没有可用字段</span>
-          <strong>系统</strong>
-          <button class="data-source-row" type="button" aria-label="复制数据源 打印日期"
-            @click="copyDataSource({ id: SYSTEM_PRINT_DATE_ID, label: '打印日期' })">
-            <span>打印日期</span><small>复制</small>
-          </button>
-        </div>
-        <div v-if="workspaceSurface === 'single-edit' && activeEditorPanel === 'components'" class="sidebar-section editor-content">
-          <button v-for="component in components" :key="component.type" class="data-source-row component-row" draggable="true"
-            @dragstart="startComponentDrag(component.type, $event)">
-            <span>{{ component.label }}</span><small>拖入画布</small>
-          </button>
-        </div>
+        <template v-if="presentation.showEditorPanel">
+          <nav class="editor-tabs" aria-label="编辑工具">
+            <button v-for="panel in EDITOR_PANELS" :key="panel" class="editor-tab"
+              :class="{ 'editor-tab-active': activeEditorPanel === panel }"
+              :aria-selected="activeEditorPanel === panel" @click="selectEditorPanel(panel)">
+              {{ editorPanelLabels[panel] }}
+            </button>
+          </nav>
 
-        <div class="sidebar-footer">
-          <span class="status-chip" :class="`status-${templateStatus}`">{{ templateStatusLabel }}</span>
-          <button v-if="workspaceSurface === 'single-edit'"
-            class="button button-link"
-            :disabled="busy || !designerReady || !printJob"
-            @click="requestTemplateReload"
-          >
-            重新加载模板
-          </button>
-        </div>
+          <div v-if="activeEditorPanel === 'data-sources'" class="sidebar-section editor-content">
+            <strong class="editor-group-title">字段</strong>
+            <button v-for="field in fieldDataSources" :key="field.id" class="data-source-row" type="button"
+              :aria-label="`复制数据源 ${field.name}`"
+              @click="copyDataSource({ id: fieldDataSourceId(field.id), label: field.name })">
+              <span class="source-main"><span class="source-symbol" aria-hidden="true">字</span><span>{{ field.name }}</span></span>
+              <small>复制</small>
+            </button>
+            <span v-if="!fieldDataSources.length" class="empty-copy">当前表没有可用字段</span>
+            <strong class="editor-group-title editor-group-system">系统</strong>
+            <button class="data-source-row" type="button" aria-label="复制数据源 打印日期"
+              @click="copyDataSource({ id: SYSTEM_PRINT_DATE_ID, label: '打印日期' })">
+              <span class="source-main"><span class="source-symbol" aria-hidden="true">系</span><span>打印日期</span></span>
+              <small>复制</small>
+            </button>
+          </div>
+          <div v-if="activeEditorPanel === 'components'" class="sidebar-section editor-content">
+            <p class="component-hint">拖动组件到右侧画布</p>
+            <button v-for="component in components" :key="component.type" class="data-source-row component-row"
+              draggable="true" @dragstart="startComponentDrag(component.type, $event)">
+              <span class="source-main"><span class="source-symbol component-symbol" aria-hidden="true">{{ component.label.slice(0, 1) }}</span><span>{{ component.label }}</span></span>
+              <small>拖入画布</small>
+            </button>
+          </div>
+        </template>
       </aside>
 
       <section class="workspace-main">
-        <header class="workspace-toolbar">
-          <div>
-            <p class="workspace-kicker">{{ workspaceSurface === 'batch-preview' ? '批量打印预览' : workspaceSurface === 'single-preview' ? '打印预览' : '模板编辑' }}</p>
-            <h2>{{ currentTemplateName }}</h2>
+        <header v-if="presentation.showWorkspaceToolbar" class="workspace-toolbar">
+          <div class="workspace-heading">
+            <h2>{{ workspaceSurface === 'batch-preview' ? '批量打印预览' : currentTemplateName }}</h2>
+            <span>{{ workspaceSurface === 'batch-preview'
+              ? `${batchSession.committedRecordIds.length} 条记录 · ${renderedPages?.pages.length ?? 0} 页`
+              : `${templateLayoutLabel(storedTemplate?.template)} · A4 纵向` }}</span>
           </div>
           <div class="workspace-actions">
-            <template v-if="workspaceSurface === 'single-edit'">
-              <span class="save-state">{{ templateStatusLabel }}</span>
-              <button class="button button-quiet" :disabled="busy" @click="requestPreviewMode">
-                返回预览
-              </button>
-              <button class="button button-primary" :disabled="busy || !templateSaveAllowed"
-                @click="saveTemplate()">保存模板</button>
-            </template>
-            <template v-else>
-              <button class="button button-quiet" :disabled="busy || !templateLoaded" @click="previewOutput">刷新预览</button>
-              <button v-if="workspaceSurface === 'single-preview'" class="button button-primary" :disabled="busy || !templateSelected || !templateSaveAllowed"
-                @click="enterEditMode">编辑模板</button>
-            </template>
+            <button v-if="presentation.showEditTemplate" class="button button-secondary"
+              :disabled="busy || !templateSelected || !templateSaveAllowed" @click="enterEditMode">编辑模板</button>
           </div>
         </header>
 
@@ -1116,10 +1204,11 @@ onBeforeUnmount(() => {
             :inert="workspaceSurface === 'batch-preview' ? true : undefined">
             <print-designer ref="designerRef" lang="zh" @ready="markDesignerReady" />
           </div>
-          <section v-if="workspaceMode === 'preview'" class="preview-surface" aria-label="打印预览">
+          <section v-if="presentation.showPreview" class="preview-surface" aria-label="打印预览">
             <div v-if="previewHtml" class="preview-paper-wrap">
               <iframe :srcdoc="previewHtml" :style="{ height: previewFrameHeight,
-                width: `min(${renderedPages?.canvasWidth ?? 794}px, 100%)` }" title="打印预览" class="preview-frame" />
+                width: `min(${renderedPages?.canvasWidth ?? 794}px, 100%)` }" title="打印预览"
+                class="preview-frame" scrolling="no" />
             </div>
             <div v-else class="preview-empty">
               <strong>{{ previewError ? '打印预览生成失败' : '正在生成打印预览' }}</strong>
@@ -1162,119 +1251,239 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.app-shell { min-height: 100dvh; padding: 18px 22px 22px; color: #1d2733; }
-.app-header { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 24px; padding-bottom: 16px; border-bottom: 1px solid #dfe4ea; }
-.brand-block h1 { margin: 0; font-size: 24px; letter-spacing: 0; }
-.eyebrow { margin: 0 0 6px; color: #718092; font-size: 11px; letter-spacing: .08em; }
-.header-context { display: flex; align-items: center; gap: 9px; color: #647184; font-size: 13px; }
-.context-divider { color: #b7c0cb; }
-.header-actions, .workspace-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.button { min-height: 34px; border: 1px solid #cbd3dc; border-radius: 6px; padding: 7px 12px; background: #fff; color: #223042; font: inherit; font-size: 13px; transition: border-color .18s ease, background-color .18s ease, transform .18s ease; }
-.button:hover:not(:disabled) { border-color: #8c9bab; background: #f7f9fb; }
-.button:active:not(:disabled) { transform: translateY(1px); }
-.button:focus-visible, .template-item:focus-visible, .editor-nav-item:focus-visible { outline: 2px solid #557da7; outline-offset: 2px; }
-.button:disabled { cursor: not-allowed; opacity: .48; }
-.button-primary { border-color: #2d5f91; background: #2d5f91; color: #fff; }
-.button-primary:hover:not(:disabled) { border-color: #244c74; background: #244c74; }
-.button-outline { border-color: #557da7; color: #2d5f91; }
-.button-quiet { border-color: transparent; background: transparent; color: #526276; }
-.button-edit-template, .button-new-template { width: 100%; margin-top: 10px; }
-.button-new-template { border-style: dashed; color: #2d5f91; }
-.button-link { min-height: 28px; border-color: transparent; padding: 4px 0; color: #2d5f91; }
-.status-line { display: flex; align-items: center; gap: 8px; min-height: 34px; color: #526276; font-size: 13px; }
-.status-retry-button { border: 0; padding: 0; background: transparent; color: #2d5f91; font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; }
-.status-retry-button:hover { color: #244c74; }
-.batch-bar { display: flex; align-items: center; gap: 12px; min-height: 38px; padding: 7px 0; color: #526276; font-size: 12px; }
-.batch-bar strong { flex: 0 0 auto; color: #263749; font-size: 13px; }
-.batch-bar > span:nth-child(2) { flex: 0 0 auto; border: 1px solid #cbd3dc; border-radius: 4px; padding: 3px 6px; }
-.batch-summaries { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.status-line-error { color: #a33a32; }
-.status-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #5b8c68; }
-.status-line-error .status-dot { background: #b44d45; }
-.workspace { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: calc(100dvh - 130px); overflow: hidden; border: 1px solid #dfe4ea; background: #fbfcfd; }
-.sidebar { display: flex; flex-direction: column; border-right: 1px solid #dfe4ea; background: #f6f8fa; }
-.sidebar-section { padding: 18px 14px; }
-.batch-preview-sidebar { display: grid; gap: 10px; }
-.batch-preview-sidebar > strong { color: #314356; font-size: 13px; font-weight: 650; }
-.batch-preview-sidebar-note { color: #7a8796; font-size: 12px; line-height: 1.5; }
-.sidebar-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.sidebar-title { color: #324254; font-size: 12px; font-weight: 650; }
-.sidebar-count { color: #8995a3; font-size: 11px; }
-.template-item { display: flex; width: 100%; gap: 9px; align-items: flex-start; border: 1px solid transparent; border-radius: 6px; padding: 10px 9px; background: transparent; color: inherit; text-align: left; font: inherit; }
-.template-item:hover:not(:disabled), .template-item-active { border-color: #cad7e4; background: #fff; }
-.template-item:disabled { cursor: default; opacity: .6; }
-.template-item-mark { width: 7px; height: 7px; flex: 0 0 7px; margin-top: 5px; border-radius: 50%; background: #557da7; }
-.template-item-copy { display: grid; gap: 4px; min-width: 0; }
-.template-item-copy strong { overflow: hidden; color: #263749; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.template-item-copy small { color: #7b8998; font-size: 11px; }
-.sidebar-note { margin: 10px 2px 0; color: #7e8b9a; font-size: 11px; line-height: 1.55; }
-.editor-nav { border-top: 1px solid #e1e6eb; }
-.editor-nav-item { display: flex; width: 100%; align-items: center; gap: 9px; border: 0; border-radius: 5px; padding: 9px 8px; background: transparent; color: #536276; text-align: left; font: inherit; font-size: 13px; }
-.editor-nav-item:hover { background: #e9eef3; color: #263749; }
-.editor-nav-item-active { background: #e2eaf2; color: #244c74; font-weight: 600; }
-.editor-nav-index { width: 18px; color: #8b98a6; font-size: 11px; font-variant-numeric: tabular-nums; }
-.sidebar-footer { display: grid; gap: 8px; margin-top: auto; padding: 14px; border-top: 1px solid #e1e6eb; }
-.status-chip { display: inline-flex; width: fit-content; align-items: center; border: 1px solid #c9d3de; border-radius: 4px; padding: 3px 6px; color: #566677; font-size: 11px; }
-.status-saved { border-color: #b8d4c0; color: #357048; }
-.status-unsaved { border-color: #e2c28e; color: #8a5a16; }
-.status-fallback { border-color: #e4b6b0; color: #98453e; }
-.workspace-main { display: flex; min-width: 0; flex-direction: column; }
-.workspace-toolbar { display: flex; min-height: 68px; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; border-bottom: 1px solid #e1e6eb; background: #fff; }
-.workspace-kicker, .context-kicker { margin: 0 0 3px; color: #6b7b8c; font-size: 11px; }
-.workspace-toolbar h2 { margin: 0; color: #233345; font-size: 17px; font-weight: 650; }
-.save-state { color: #748293; font-size: 12px; }
-.editor-context { border-bottom: 1px solid #e1e6eb; background: #f8fafc; }
-.context-panel { padding: 14px 18px; }
-.context-panel-compact { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
-.context-panel h3 { margin: 0; color: #263749; font-size: 14px; font-weight: 650; }
-.context-panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
-.context-panel-heading > span { color: #8290a0; font-size: 11px; }
-.context-hint { max-width: 66ch; margin: 12px 0 0; color: #7b8998; font-size: 12px; line-height: 1.5; }
-.data-source-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.data-source-group { display: grid; gap: 6px; min-width: 0; }
-.data-source-group > strong { color: #526276; font-size: 12px; font-weight: 650; }
-.data-source-row { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; border: 0; border-bottom: 1px solid #e5e9ee; padding: 6px 0; background: transparent; color: #334457; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.app-shell {
+  --ui-primary: #3370ff;
+  --ui-primary-hover: #245bdb;
+  --ui-primary-pressed: #1c4cba;
+  --ui-primary-subtle: #e8f0ff;
+  --ui-text: #1f2329;
+  --ui-text-secondary: #646a73;
+  --ui-text-tertiary: #8f959e;
+  --ui-text-disabled: #c9cdd4;
+  --ui-border: #dee0e3;
+  --ui-divider: #ebecef;
+  --ui-surface: #fff;
+  --ui-surface-subtle: #f5f6f7;
+  --ui-workspace: #f2f3f5;
+  --ui-danger: #d83931;
+  --ui-warning: #d46b08;
+  height: 100dvh;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 45px minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.app-header {
+  position: relative;
+  z-index: 15;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--ui-divider);
+  background: var(--ui-surface);
+}
+.brand-block { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.brand-mark { width: 22px; height: 22px; display: grid; place-items: center; flex: 0 0 22px; border-radius: 5px; background: var(--ui-primary); color: #fff; font-size: 11px; font-weight: 700; }
+.brand-block h1 { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; white-space: nowrap; }
+.header-context { min-width: 0; display: flex; align-items: center; gap: 9px; overflow: hidden; color: var(--ui-text-secondary); font-size: 12px; white-space: nowrap; }
+.header-context > span { overflow: hidden; text-overflow: ellipsis; }
+.context-divider { flex: 0 0 auto; color: var(--ui-text-disabled); }
+.header-actions, .workspace-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; }
+.app-header-edit { grid-template-columns: auto minmax(0, 1fr) auto; }
+.edit-header-context { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.edit-header-context strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }
+.button {
+  min-height: 32px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0 11px;
+  background: transparent;
+  color: var(--ui-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 30px;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: border-color .12s ease, background-color .12s ease, color .12s ease;
+}
+.button:hover:not(:disabled) { background: var(--ui-surface-subtle); }
+.button:active:not(:disabled) { background: #e8eaed; }
+.button:focus-visible,
+.template-item:focus-visible,
+.template-more-button:focus-visible,
+.editor-tab:focus-visible,
+.data-source-row:focus-visible,
+.action-menu-item:focus-visible { outline: 2px solid rgba(51, 112, 255, .42); outline-offset: 1px; }
+.button:disabled,
+.template-item:disabled,
+.template-more-button:disabled,
+.data-source-row:disabled,
+.action-menu-item:disabled { cursor: not-allowed; color: var(--ui-text-disabled); background: var(--ui-surface-subtle); border-color: var(--ui-divider); }
+.button-primary { border-color: var(--ui-primary); background: var(--ui-primary); color: #fff; }
+.button-primary:hover:not(:disabled) { border-color: var(--ui-primary-hover); background: var(--ui-primary-hover); }
+.button-primary:active:not(:disabled) { border-color: var(--ui-primary-pressed); background: var(--ui-primary-pressed); }
+.button-secondary { border-color: var(--ui-border); background: #fff; }
+.button-secondary:hover:not(:disabled) { border-color: #b7bac0; background: var(--ui-surface-subtle); }
+.button-tertiary { color: var(--ui-text-secondary); }
+.back-button { justify-self: start; padding-left: 4px; }
+.status-line {
+  position: fixed;
+  z-index: 40;
+  left: 50%;
+  bottom: 14px;
+  max-width: min(620px, calc(100vw - 24px));
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 11px;
+  border: 1px solid var(--ui-divider);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .98);
+  box-shadow: 0 6px 18px rgba(31, 35, 41, .12);
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  transform: translateX(-50%);
+}
+.status-line-error { border-color: #f2c4c1; background: #fff7f6; color: #8f2520; }
+.status-indicator { width: 7px; height: 7px; flex: 0 0 7px; border: 2px solid #baceff; border-top-color: var(--ui-primary); border-radius: 50%; }
+.status-line-error .status-indicator { border: 0; background: var(--ui-danger); }
+.status-retry-button { border: 0; padding: 0 2px; background: transparent; color: var(--ui-primary); font: inherit; font-weight: 500; cursor: pointer; }
+.status-retry-button:hover { color: var(--ui-primary-hover); }
+.workspace {
+  --workspace-sidebar-width: 188px;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--workspace-sidebar-width) minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--ui-surface);
+}
+.workspace-edit { --workspace-sidebar-width: 208px; }
+.sidebar { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--ui-divider); background: #fafbfc; }
+.sidebar-section { min-width: 0; padding: 12px 10px; }
+.sidebar-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; margin-bottom: 6px; }
+.sidebar-title { font-size: 13px; font-weight: 600; }
+.sidebar-count { color: var(--ui-text-tertiary); font-size: 11px; }
+.template-section { flex: 1; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; padding: 8px 7px; }
+.template-section .sidebar-title-row { padding: 0 3px; }
+.template-list { min-height: 0; overflow: auto; padding: 0 1px 8px; scrollbar-width: thin; }
+.template-directory-row { position: relative; border: 1px solid transparent; border-radius: 6px; }
+.template-directory-row + .template-directory-row { margin-top: 2px; }
+.template-directory-row-active { border-color: #baceff; background: #fff; }
+.template-directory-row-active::before { content: ""; position: absolute; z-index: 2; left: -1px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--ui-primary); }
+.template-item { width: 100%; min-height: 46px; display: flex; align-items: center; border: 1px solid transparent; border-radius: 6px; padding: 7px 32px 7px 9px; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.template-item:hover:not(:disabled) { background: var(--ui-surface-subtle); }
+.template-item-active { background: #fff; }
+.template-item-copy { min-width: 0; display: grid; gap: 2px; }
+.template-item-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ui-text); font-size: 13px; font-weight: 500; }
+.template-item-copy small { min-width: 0; display: flex; align-items: center; gap: 5px; overflow: hidden; color: var(--ui-text-tertiary); font-size: 11px; white-space: nowrap; }
+.template-layout-label { overflow: hidden; text-overflow: ellipsis; }
+.default-tag, .readonly-tag { flex: 0 0 auto; border-radius: 3px; padding: 0 4px; background: #eaf8ef; color: #1f6f43; font-size: 10px; line-height: 17px; }
+.template-more-anchor { position: absolute; z-index: 4; top: 7px; right: 5px; }
+.template-more-button { width: 30px; height: 30px; border: 0; border-radius: 5px; background: transparent; color: var(--ui-text-secondary); font: inherit; font-size: 17px; letter-spacing: 1px; cursor: pointer; opacity: 0; }
+.template-directory-row:hover .template-more-button,
+.template-directory-row:focus-within .template-more-button,
+.template-directory-row-active .template-more-button { opacity: 1; }
+.template-more-button:hover { background: var(--ui-surface-subtle); }
+.template-create { position: relative; padding-top: 8px; border-top: 1px solid var(--ui-divider); }
+.button-new-template { width: 100%; }
+.action-menu { position: absolute; z-index: 25; min-width: 148px; padding: 5px; border: 1px solid var(--ui-divider); border-radius: 7px; background: #fff; box-shadow: 0 6px 18px rgba(31, 35, 41, .12); }
+.action-menu-right { top: 36px; right: 0; }
+.template-action-menu { top: 32px; right: -2px; }
+.template-create-menu { right: 0; bottom: 40px; left: 0; width: auto; }
+.template-create-menu .action-menu-item { align-items: flex-start; }
+.template-create-menu .action-menu-item span { min-width: 0; }
+.template-create-menu .action-menu-item small { white-space: normal; }
+.action-menu-item { width: 100%; min-height: 32px; display: flex; align-items: center; border: 0; border-radius: 5px; padding: 6px 9px; background: transparent; color: var(--ui-text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.action-menu-item:hover:not(:disabled) { background: var(--ui-surface-subtle); }
+.action-menu-item > span { display: grid; gap: 1px; }
+.action-menu-item strong { font-size: 13px; font-weight: 500; }
+.action-menu-item small { color: var(--ui-text-tertiary); font-size: 11px; }
+.action-menu-danger { margin-top: 4px; border-top: 1px solid var(--ui-divider); border-radius: 0 0 5px 5px; color: var(--ui-danger); }
+.edit-more-anchor { position: relative; }
+.batch-preview-sidebar { flex: 1; overflow: auto; padding: 10px 12px; }
+.batch-count { display: flex; align-items: baseline; gap: 5px; margin: 4px 0 12px; }
+.batch-count strong { font-size: 24px; line-height: 28px; font-weight: 600; }
+.batch-count span { color: var(--ui-text-secondary); font-size: 11px; }
+.batch-metadata { margin: 0; }
+.batch-metadata > div { min-width: 0; display: flex; justify-content: space-between; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--ui-divider); }
+.batch-metadata dt { color: var(--ui-text-tertiary); font-size: 11px; }
+.batch-metadata dd { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+.batch-record-list { display: grid; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; }
+.batch-record-list li { min-height: 32px; display: flex; align-items: center; border-radius: 5px; padding: 0 8px; background: var(--ui-surface-subtle); font-size: 11px; }
+.batch-record-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-remainder { display: block; margin-top: 7px; color: var(--ui-text-tertiary); font-size: 11px; }
+.editor-tabs { flex: 0 0 44px; display: flex; gap: 16px; padding: 0 10px; border-bottom: 1px solid var(--ui-divider); background: #fff; }
+.editor-tab { position: relative; border: 0; padding: 0 1px; background: transparent; color: var(--ui-text-secondary); font: inherit; font-size: 13px; cursor: pointer; }
+.editor-tab-active { color: var(--ui-text); font-weight: 500; }
+.editor-tab-active::after { content: ""; position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: var(--ui-primary); }
+.editor-content { flex: 1; min-height: 0; overflow: auto; padding: 10px; background: #fff; scrollbar-width: thin; }
+.editor-group-title { display: block; margin: 0 0 5px; color: var(--ui-text-tertiary); font-size: 11px; font-weight: 500; }
+.editor-group-system { margin-top: 14px; }
+.data-source-row { width: 100%; min-width: 0; min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; border-radius: 5px; padding: 0 7px; background: transparent; color: var(--ui-text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.data-source-row:hover { background: var(--ui-surface-subtle); }
+.source-main { min-width: 0; display: flex; align-items: center; gap: 7px; }
+.source-main > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-symbol { width: 20px; height: 20px; display: grid; place-items: center; flex: 0 0 20px; border-radius: 4px; background: #edf3ff; color: #4569a8; font-size: 10px; }
+.component-symbol { background: #eef7f2; color: #397455; }
+.data-source-row small { flex: 0 0 auto; color: var(--ui-text-tertiary); font-size: 10px; }
 .data-source-row.component-row { cursor: grab; }
-.data-source-row:hover { border-bottom-color: #9fb2c5; color: #244c74; }
 .data-source-row.component-row:active { cursor: grabbing; }
-.data-source-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.data-source-row small { color: #8a96a3; font-size: 10px; }
-.empty-copy { color: #8a96a3; font-size: 12px; }
-.settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.settings-grid > div { display: grid; gap: 3px; border-bottom: 1px solid #e5e9ee; padding: 4px 0; }
-.settings-grid span { color: #8290a0; font-size: 11px; }
-.settings-grid strong { overflow: hidden; color: #334457; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.canvas-stage { position: relative; flex: 1; min-height: 620px; overflow: hidden; background: #eef1f4; }
-.designer-host { position: absolute; z-index: 1; inset: 0; overflow: auto; background: #fff; opacity: 1; }
+.empty-copy, .component-hint { color: var(--ui-text-tertiary); font-size: 11px; }
+.component-hint { margin: 0 0 7px; }
+.status-chip { display: inline-flex; width: fit-content; align-items: center; border: 1px solid var(--ui-border); border-radius: 4px; padding: 1px 5px; color: var(--ui-text-secondary); font-size: 10px; white-space: nowrap; }
+.status-saved { border-color: #c7e5cf; color: #28723d; }
+.status-unsaved { border-color: #f1d4a6; color: #9a5f08; }
+.status-fallback { border-color: #f2c4c1; color: #9a302a; }
+.workspace-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.workspace-toolbar { flex: 0 0 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--ui-divider); background: #fff; }
+.workspace-heading { min-width: 0; display: grid; gap: 1px; }
+.workspace-heading h2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 600; }
+.workspace-heading span { color: var(--ui-text-tertiary); font-size: 10px; line-height: 14px; }
+.canvas-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--ui-workspace); }
+.designer-host { position: absolute; z-index: 1; inset: 0; overflow: hidden; background: #fff; opacity: 1; }
 .designer-host-preview { opacity: 0; pointer-events: none; }
 .designer-host print-designer { display: block; min-height: 100%; }
-.preview-surface { position: absolute; z-index: 2; inset: 0; overflow: auto; padding: 28px; background: #eef1f4; }
-.preview-paper-wrap { display: flex; min-height: 100%; justify-content: center; align-items: flex-start; }
-.preview-frame { width: min(794px, 100%); min-height: 1040px; border: 0; background: #fff; box-shadow: 0 3px 14px rgb(30 44 60 / 14%); }
-.preview-empty { display: grid; place-items: center; min-height: 360px; gap: 7px; color: #788696; font-size: 13px; text-align: center; }
-.preview-empty strong { color: #4a5b6d; font-size: 15px; font-weight: 600; }
-.decision-overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 20px; background: rgb(15 23 42 / 55%); }
-.decision-card { width: min(420px, 100%); border: 1px solid #cbd3dc; border-radius: 8px; padding: 20px; background: #fff; box-shadow: 0 14px 36px rgb(30 44 60 / 20%); }
-.decision-card h2 { margin: 0; color: #233345; font-size: 17px; font-weight: 650; }
-.decision-card p { margin: 10px 0 20px; color: #647184; font-size: 13px; line-height: 1.6; }
+.preview-surface { position: absolute; z-index: 2; inset: 0; overflow: auto; padding: 18px 16px 0; background: var(--ui-workspace); scrollbar-width: thin; }
+.preview-paper-wrap { min-height: 100%; display: flex; justify-content: center; align-items: flex-start; }
+.preview-frame { display: block; width: min(794px, 100%); min-height: 1040px; overflow: hidden; border: 0; background: #fff; box-shadow: 0 2px 8px rgba(31, 35, 41, .11); }
+.preview-empty { min-height: 100%; display: grid; place-content: center; justify-items: center; gap: 7px; padding: 24px; color: var(--ui-text-tertiary); font-size: 12px; text-align: center; }
+.preview-empty strong { color: var(--ui-text-secondary); font-size: 14px; font-weight: 600; }
+.decision-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(31, 35, 41, .46); }
+.decision-card { width: min(420px, 100%); border: 1px solid var(--ui-divider); border-radius: 8px; padding: 20px; background: #fff; box-shadow: 0 12px 32px rgba(31, 35, 41, .18); }
+.decision-card h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.decision-card p { margin: 10px 0 20px; color: var(--ui-text-secondary); font-size: 13px; line-height: 1.6; }
 .decision-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-@media (max-width: 640px) {
-  .app-shell { padding: 12px; }
-  .app-header { grid-template-columns: 1fr; gap: 10px; }
-  .header-actions { width: 100%; }
-  .header-actions .button { flex: 1; }
-  .workspace { grid-template-columns: 1fr; }
-  .sidebar { border-right: 0; border-bottom: 1px solid #dfe4ea; }
-  .sidebar-footer { display: none; }
-  .editor-nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
-  .editor-nav .sidebar-title-row { grid-column: 1 / -1; }
-  .editor-nav-item { justify-content: center; padding: 8px 4px; }
-  .editor-nav-index { display: none; }
-  .workspace-toolbar { align-items: flex-start; flex-direction: column; }
-  .context-panel-compact { align-items: flex-start; flex-direction: column; gap: 8px; }
-  .data-source-groups, .settings-grid { grid-template-columns: 1fr; }
-  .canvas-stage { min-height: 560px; }
-  .preview-surface { padding: 12px; }
-  .preview-frame { min-height: 760px; }
+@media (max-width: 760px) {
+  .workspace { --workspace-sidebar-width: 164px; }
+  .workspace-edit { --workspace-sidebar-width: 188px; }
+  .app-header { gap: 8px; padding: 0 9px; }
+  .header-context { display: none; }
+  .header-actions { gap: 4px; }
+  .button { padding: 0 8px; }
+  .template-section { padding-right: 5px; padding-left: 5px; }
+  .template-item { padding-left: 7px; }
+  .template-item-copy small .template-layout-label { display: none; }
+  .preview-surface { padding: 12px 10px 0; }
+}
+@media (max-width: 560px) {
+  .app-shell { min-width: 320px; }
+  .brand-block h1 { display: none; }
+  .workspace, .workspace-edit { grid-template-columns: 148px minmax(0, 1fr); }
+  .header-actions .button { padding: 0 6px; font-size: 12px; }
+  .workspace-toolbar { padding-right: 8px; padding-left: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .button { transition: none; }
 }
 </style>

@@ -1090,13 +1090,30 @@ test("SPEC-UX-03/07: locked designer header and panel selectors keep one compone
     },
   } });
   const designer = { shadowRoot: { appendChild(style: any) { appended.push(style); } } } as unknown as DesignerElement;
+  const target = new EventTarget();
+  const closedPanels: string[] = [];
+  for (const eventName of [
+    "designer:close-elements-panel",
+    "designer:close-properties-panel",
+    "designer:close-structure-panel",
+  ]) {
+    target.addEventListener(eventName, () => closedPanels.push(eventName));
+  }
   try {
-    const stop = installDesignerWorkspaceChrome(designer, new EventTarget());
+    const stop = installDesignerWorkspaceChrome(designer, target);
     assert.match(appended[0].textContent, /header\.h-14\s*\{\s*display:\s*none/);
     assert.match(bundle, /templates: "模版列表"/);
     assert.match(bundle, /elements: "元素库"/);
     assert.match(appended[0].textContent, /button\[title="元素库"\]/);
     assert.match(appended[0].textContent, /button\[title="模版列表"\]/);
+    assert.match(appended[0].textContent, /button\[title="导出 PDF"\]/);
+    assert.match(appended[0].textContent, /button\[title\^="打印预览"\]/);
+    assert.match(appended[0].textContent, /button\[title\^="主题:"\]/);
+    assert.deepEqual(closedPanels, [
+      "designer:close-elements-panel",
+      "designer:close-properties-panel",
+      "designer:close-structure-panel",
+    ]);
     stop();
   } finally {
     if (original) Object.defineProperty(globalThis, "document", original);

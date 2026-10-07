@@ -22,6 +22,7 @@ import {
 
 export type DesignerElement = HTMLElement & {
   isReady?: boolean;
+  setTheme?(theme: "light" | "dark" | "system"): void;
   loadTemplateData(data: unknown): boolean;
   setTestData(data: Record<string, unknown>, options?: { merge?: boolean }): Promise<void>;
   setVariables(data: Record<string, unknown>, options?: { merge?: boolean }): Promise<void>;
@@ -428,10 +429,21 @@ export function installDesignerWorkspaceChrome(designer: DesignerElement, target
   const style = document.createElement("style");
   style.textContent = `
     header.h-14 { display: none !important; }
-    button[title="元素库"], button[title="模版列表"] { display: none !important; }
+    button[title="元素库"],
+    button[title="模版列表"],
+    button[title="导出 PDF"],
+    button[title="导出 HTML"],
+    button[title="导出图片"],
+    button[title^="打印预览"],
+    button[title^="打印 ("],
+    button[title^="选择语言:"],
+    button[title^="主题:"],
+    button[title="帮助"] { display: none !important; }
   `;
   root.appendChild(style);
   target.dispatchEvent(new Event("designer:close-elements-panel"));
+  target.dispatchEvent(new Event("designer:close-properties-panel"));
+  target.dispatchEvent(new Event("designer:close-structure-panel"));
   const preventSecondPanel = (event: Event) => {
     event.stopImmediatePropagation();
   };
