@@ -39,4 +39,4 @@
 
 # 5. 剩余门禁
 
-全量 `npm test` 170/170、生产构建、`git diff --check` 和锁定目录差异检查均通过；候选入口为 `assets/main.c4cf9ae0.js`，`src/core/**`、`src/engine/**`、`src/host/**`、依赖、应用配置和发布配置相对基线无改动。下一步提交并推送样式分支。不得自动上传或发版；用户确认后才能按既有 Skill 将候选只发布到 `F225904757`。发布后在不带 `debugPort` 的正式 Base 执行 `E2E-UX-02`，再决定是否关闭 BUG-0005。
+全量 `npm test` 170/170、生产构建、`git diff --check` 和锁定目录差异检查均通过；候选入口为 `assets/main.c4cf9ae0.js`，`src/core/**`、`src/engine/**`、`src/host/**`、依赖、应用配置和发布配置相对基线无改动。样式候选已以 commit `429663cf94a8487facd305231738497fbf386ffe` 推送到远端 `codex/modern-workbench-style`。不得自动上传或发版；用户确认后才能按既有 Skill 将候选只发布到 `F225904757`。发布后在不带 `debugPort` 的正式 Base 执行 `E2E-UX-02`，再决定是否关闭 BUG-0005。
