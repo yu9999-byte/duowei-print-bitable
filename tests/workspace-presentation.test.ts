@@ -84,6 +84,19 @@ test("CT-UX-08/09: App shell removes the old duplicated and native-looking contr
   assert.match(source, /\{\{ visibleTemplateCount \}\} 个/);
 });
 
+test("CT-UX-11: template rename and delete use the product dialog instead of browser prompts", () => {
+  const source = readFileSync("src/App.vue", "utf8");
+  assert.doesNotMatch(source, /window\.prompt/);
+  assert.doesNotMatch(source, /window\.confirm/);
+  assert.match(source, /templateManagementDialog/);
+  assert.match(source, /aria-labelledby="template-management-title"/);
+  assert.match(source, /aria-describedby="template-management-description"/);
+  assert.match(source, /aria-label="模板名称"/);
+  assert.match(source, /@keydown\.tab="trapTemplateManagementFocus"/);
+  assert.match(source, /templateManagementReturnFocus/);
+  assert.match(source, />确认删除</);
+});
+
 test("CT-UX-08/10: the visual shell declares Feishu tokens and one scroll owner", () => {
   const source = readFileSync("src/App.vue", "utf8");
   assert.match(source, /--ui-primary:\s*#3370ff/i);

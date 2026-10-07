@@ -51,6 +51,7 @@ import {
   getBatchReadFailureFeedback,
 } from "./components/batch-read-feedback.ts";
 import { getBatchWorkspaceActionState } from "./components/batch-workspace-action-state.ts";
+import { normalizeTemplateName } from "./components/template-management.ts";
 import { getWorkspacePresentation } from "./components/workspace-presentation.ts";
 import {
   canEnterTemplateEdit,
@@ -84,6 +85,11 @@ const templateSaveAllowed = ref(false);
 const templateDirty = ref(false);
 const selectedTemplateId = ref<string | null>(null);
 const decisionDialog = ref<"leave" | "reload" | "context" | null>(null);
+const templateManagementDialog = ref<{ action: "rename" | "remove"; item: StoredTemplate } | null>(null);
+const templateRenameInput = ref("");
+const templateRenameInputRef = ref<HTMLInputElement | null>(null);
+const templateManagementCardRef = ref<HTMLElement | null>(null);
+const templateManagementCancelRef = ref<HTMLButtonElement | null>(null);
 const pendingContext = ref<FeishuSelection | null>(null);
 const pendingLoadRequest = ref<"current" | "batch" | "exit" | null>(null);
 const workspaceMode = ref<WorkspaceMode>(initialWorkspaceMode());
@@ -114,6 +120,7 @@ let stopDesignerWorkspaceChrome: (() => void) | undefined;
 let stopDesignerTemplatePanelSuppression: (() => void) | undefined;
 let stopDesignerDirtyTracking: (() => void) | undefined;
 let resolveDesignerReady: (() => void) | undefined;
+let templateManagementReturnFocus: HTMLElement | null = null;
 const readyPromise = new Promise<void>((resolve) => { resolveDesignerReady = resolve; });
 
 const editorPanelLabels: Record<EditorPanel, string> = {
@@ -169,6 +176,13 @@ const showStatusFeedback = computed(() => busy.value
   || hasFeedbackError.value
   || showBatchRetry.value
   || statusToastVisible.value);
+const normalizedTemplateRename = computed(() => normalizeTemplateName(templateRenameInput.value));
+const templateManagementConfirmDisabled = computed(() => {
+  if (busy.value || !templateManagementDialog.value) return true;
+  if (templateManagementDialog.value.action === "remove") return false;
+  return !normalizedTemplateRename.value
+    || normalizedTemplateRename.value === templateManagementDialog.value.item.name;
+});
 
 watch(status, () => {
   statusToastVisible.value = true;
@@ -209,7 +223,9 @@ function handleGlobalPointerDown(event: PointerEvent) {
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape") closeTransientMenus();
+  if (event.key !== "Escape") return;
+  if (templateManagementDialog.value && !busy.value) closeTemplateManagementDialog();
+  else closeTransientMenus();
 }
 
 async function waitForDesignerReady() {
@@ -243,6 +259,9 @@ function invalidateContext() {
   templateDirty.value = false;
   selectedTemplateId.value = null;
   decisionDialog.value = null;
+  templateManagementDialog.value = null;
+  templateRenameInput.value = "";
+  templateManagementReturnFocus = null;
   pendingContext.value = null;
   pendingLoadRequest.value = null;
   previewHtml.value = "";
@@ -285,6 +304,9 @@ async function loadRecords(useBatchPicker = false) {
     templateDirty.value = false;
     selectedTemplateId.value = null;
     decisionDialog.value = null;
+    templateManagementDialog.value = null;
+    templateRenameInput.value = "";
+    templateManagementReturnFocus = null;
     pendingContext.value = null;
     pendingLoadRequest.value = null;
     previewHtml.value = "";
@@ -677,12 +699,13 @@ async function selectTemplate(id: string) {
   await loadTemplateAndPreview(printJob.value, selection.value, contextRevision, id);
 }
 
-async function updateDirectory(action: "rename" | "remove" | "default", item: StoredTemplate) {
-  if (isBatchMode.value || !selection.value || busy.value) return;
+async function updateDirectory(
+  action: "rename" | "remove" | "default",
+  item: StoredTemplate,
+  renameTo?: string,
+): Promise<boolean> {
+  if (isBatchMode.value || !selection.value || busy.value) return false;
   closeTransientMenus();
-  const name = action === "rename" ? window.prompt("模板名称", item.name)?.trim() : null;
-  if (action === "rename" && (!name || name === item.name)) return;
-  if (action === "remove" && !window.confirm(`删除模板“${item.name}”？此操作不能撤销。`)) return;
   const active = selection.value;
   const revision = contextRevision;
   busy.value = true;
@@ -692,7 +715,7 @@ async function updateDirectory(action: "rename" | "remove" | "default", item: St
     const context = { baseId: active.baseId, tableId: active.tableId };
     const expected = templateCollection.value.revision;
     const updated = action === "rename"
-      ? await templateRepository.rename(context, item.id, name!, expected)
+      ? await templateRepository.rename(context, item.id, renameTo!, expected)
       : action === "remove"
         ? await templateRepository.remove(context, item.id, expected)
         : await templateRepository.setDefault(context, item.id, expected);
@@ -702,11 +725,77 @@ async function updateDirectory(action: "rename" | "remove" | "default", item: St
     if (action === "remove" && selectedTemplateId.value === item.id) {
       await loadTemplateAndPreview(printJob.value, active, revision, updated.defaultId);
     }
+    return true;
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : "模板目录操作失败";
+    status.value = "模板目录未更新";
+    return false;
   } finally {
     busy.value = false;
   }
+}
+
+async function requestDirectoryAction(action: "rename" | "remove" | "default", item: StoredTemplate) {
+  const activeElement = document.activeElement;
+  templateManagementReturnFocus = activeElement instanceof HTMLElement
+    ? activeElement.closest(".template-directory-row")?.querySelector<HTMLElement>(".template-more-button") ?? null
+    : null;
+  closeTransientMenus();
+  if (action === "default") {
+    templateManagementReturnFocus = null;
+    await updateDirectory(action, item);
+    return;
+  }
+  templateManagementDialog.value = { action, item };
+  templateRenameInput.value = action === "rename" ? item.name : "";
+  if (action === "rename") {
+    await nextTick();
+    templateRenameInputRef.value?.focus();
+    templateRenameInputRef.value?.select();
+  } else {
+    await nextTick();
+    templateManagementCancelRef.value?.focus();
+  }
+}
+
+function closeTemplateManagementDialog() {
+  if (busy.value) return;
+  const returnFocus = templateManagementReturnFocus;
+  templateManagementDialog.value = null;
+  templateRenameInput.value = "";
+  templateManagementReturnFocus = null;
+  void nextTick(() => {
+    if (returnFocus?.isConnected) returnFocus.focus();
+  });
+}
+
+function trapTemplateManagementFocus(event: KeyboardEvent) {
+  const dialog = templateManagementCardRef.value;
+  if (!dialog) return;
+  const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+  ));
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+async function confirmTemplateManagement() {
+  const dialog = templateManagementDialog.value;
+  if (!dialog || templateManagementConfirmDisabled.value) return;
+  const completed = await updateDirectory(
+    dialog.action,
+    dialog.item,
+    dialog.action === "rename" ? normalizedTemplateRename.value! : undefined,
+  );
+  if (completed) closeTemplateManagementDialog();
 }
 
 function enterEditMode() {
@@ -1118,12 +1207,12 @@ onBeforeUnmount(() => {
                   :disabled="busy" @click.stop="toggleTemplateMenu(item.id)">···</button>
                 <div v-if="activeTemplateMenuId === item.id" class="action-menu template-action-menu" role="menu">
                   <button class="action-menu-item" role="menuitem" :disabled="busy"
-                    @click="updateDirectory('rename', item)">重命名</button>
+                    @click="requestDirectoryAction('rename', item)">重命名</button>
                   <button v-if="item.id !== templateCollection.defaultId" class="action-menu-item" role="menuitem"
-                    :disabled="busy" @click="updateDirectory('default', item)">设为默认模板</button>
+                    :disabled="busy" @click="requestDirectoryAction('default', item)">设为默认模板</button>
                   <button class="action-menu-item action-menu-danger" role="menuitem"
                     :disabled="busy || (item.id === templateCollection.defaultId && templateCollection.templates.length > 1)"
-                    @click="updateDirectory('remove', item)">删除模板</button>
+                    @click="requestDirectoryAction('remove', item)">删除模板</button>
                 </div>
               </div>
             </div>
@@ -1220,6 +1309,40 @@ onBeforeUnmount(() => {
           </section>
         </div>
       </section>
+    </section>
+
+    <section
+      v-if="templateManagementDialog"
+      class="decision-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="template-management-title"
+      aria-describedby="template-management-description"
+      @click.self="closeTemplateManagementDialog"
+    >
+      <div ref="templateManagementCardRef" class="decision-card template-management-card"
+        @keydown.tab="trapTemplateManagementFocus">
+        <h2 id="template-management-title">
+          {{ templateManagementDialog.action === "rename" ? "重命名模板" : "删除模板" }}
+        </h2>
+        <template v-if="templateManagementDialog.action === 'rename'">
+          <p id="template-management-description">输入一个便于识别的模板名称。</p>
+          <label class="template-name-field">
+            <span>模板名称</span>
+            <input ref="templateRenameInputRef" v-model="templateRenameInput" class="template-name-input"
+              aria-label="模板名称" maxlength="50" @keydown.enter.prevent="confirmTemplateManagement" />
+          </label>
+        </template>
+        <p v-else id="template-management-description">删除“{{ templateManagementDialog.item.name }}”后无法恢复，其他模板不会受影响。</p>
+        <div class="decision-actions">
+          <button ref="templateManagementCancelRef" type="button" class="button button-quiet" :disabled="busy"
+            @click="closeTemplateManagementDialog">取消</button>
+          <button v-if="templateManagementDialog.action === 'rename'" type="button" class="button button-primary"
+            :disabled="templateManagementConfirmDisabled" @click="confirmTemplateManagement">保存名称</button>
+          <button v-else type="button" class="button button-danger" :disabled="templateManagementConfirmDisabled"
+            @click="confirmTemplateManagement">确认删除</button>
+        </div>
+      </div>
     </section>
 
     <section
@@ -1331,9 +1454,11 @@ onBeforeUnmount(() => {
 .button-primary { border-color: var(--ui-primary); background: var(--ui-primary); color: #fff; }
 .button-primary:hover:not(:disabled) { border-color: var(--ui-primary-hover); background: var(--ui-primary-hover); }
 .button-primary:active:not(:disabled) { border-color: var(--ui-primary-pressed); background: var(--ui-primary-pressed); }
-.button-secondary { border-color: var(--ui-border); background: #fff; }
-.button-secondary:hover:not(:disabled) { border-color: #b7bac0; background: var(--ui-surface-subtle); }
-.button-tertiary { color: var(--ui-text-secondary); }
+.button-danger { border-color: var(--ui-danger); background: var(--ui-danger); color: #fff; }
+.button-danger:hover:not(:disabled) { border-color: #b42318; background: #b42318; }
+.button-secondary, .button-outline { border-color: var(--ui-border); background: #fff; }
+.button-secondary:hover:not(:disabled), .button-outline:hover:not(:disabled) { border-color: #b7bac0; background: var(--ui-surface-subtle); }
+.button-tertiary, .button-quiet { color: var(--ui-text-secondary); }
 .back-button { justify-self: start; padding-left: 4px; }
 .status-line {
   position: fixed;
@@ -1464,6 +1589,11 @@ onBeforeUnmount(() => {
 .decision-card h2 { margin: 0; font-size: 16px; font-weight: 600; }
 .decision-card p { margin: 10px 0 20px; color: var(--ui-text-secondary); font-size: 13px; line-height: 1.6; }
 .decision-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.template-management-card { width: min(400px, 100%); }
+.template-name-field { display: grid; gap: 7px; margin: -4px 0 20px; color: var(--ui-text-secondary); font-size: 12px; }
+.template-name-input { width: 100%; height: 34px; border: 1px solid var(--ui-border); border-radius: 6px; padding: 0 10px; background: #fff; color: var(--ui-text); font: inherit; font-size: 13px; outline: none; }
+.template-name-input:hover { border-color: #8f959e; }
+.template-name-input:focus { border-color: var(--ui-primary); box-shadow: 0 0 0 2px rgba(51, 112, 255, .14); }
 @media (max-width: 760px) {
   .workspace { --workspace-sidebar-width: 164px; }
   .workspace-edit { --workspace-sidebar-width: 188px; }

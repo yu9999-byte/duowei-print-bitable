@@ -14,6 +14,7 @@ import {
   toggleWorkspaceMode,
   type TemplateStatusInput,
 } from "../src/core/workspace.ts";
+import { normalizeTemplateName } from "../src/components/template-management.ts";
 
 test("SPEC-UX-01: a loaded workspace starts in print preview and enters edit explicitly", () => {
   assert.equal(initialWorkspaceMode(), "preview");
@@ -43,6 +44,12 @@ test("SPEC-UX-02: template status distinguishes automatic, saved, fallback, and 
 
 test("SPEC-UX-03: only actionable data sources and components are exposed", () => {
   assert.deepEqual(EDITOR_PANELS, ["data-sources", "components"]);
+});
+
+test("SPEC-UX-11: template names are trimmed and blank names are rejected", () => {
+  assert.equal(normalizeTemplateName("  发货单  "), "发货单");
+  assert.equal(normalizeTemplateName("   "), null);
+  assert.equal(normalizeTemplateName("\n\t"), null);
 });
 
 test("SPEC-UX-04: editing requires an explicitly selected loaded template", () => {
