@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>多维打印 Goal v7 视觉证据</title>
+  <style>
+    :root {
+      --primary: #3370ff;
+      --primary-hover: #245bdb;
+      --primary-soft: #e8f0ff;
+      --text: #1f2329;
+      --text-2: #646a73;
+      --text-3: #8f959e;
+      --border: #dee0e3;
+      --divider: #ebecef;
+      --surface: #ffffff;
+      --subtle: #f5f6f7;
+      --workspace: #f2f3f5;
+      --danger: #d83931;
+      --success: #2ea121;
+      --sidebar: 228px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      color: var(--text);
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #fff; }
+    button { font: inherit; }
+    .app { width: 100vw; height: 100vh; min-width: 640px; display: grid; grid-template-rows: 49px minmax(0, 1fr); background: var(--surface); }
+    .appbar { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 0 16px; border-bottom: 1px solid var(--divider); background: #fff; }
+    .brand { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+    .brand-mark { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; color: #fff; font-size: 12px; font-weight: 700; background: var(--primary); }
+    .brand-name { font-size: 16px; line-height: 24px; font-weight: 600; }
+    .crumb { min-width: 0; color: var(--text-2); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .crumb::before { content: "/"; padding-right: 12px; color: #c9cdd4; }
+    .actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+    .btn { height: 32px; padding: 0 12px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text); font-size: 14px; line-height: 30px; white-space: nowrap; }
+    .btn.secondary { border-color: var(--border); background: #fff; }
+    .btn.tertiary { color: var(--text-2); }
+    .btn.primary { border-color: var(--primary); background: var(--primary); color: #fff; }
+    .btn.icon { width: 32px; padding: 0; display: grid; place-items: center; font-size: 18px; }
+    .btn.disabled { color: #c9cdd4; background: var(--subtle); border-color: var(--divider); }
+    .workspace { min-height: 0; display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); }
+    .sidebar { min-width: 0; min-height: 0; border-right: 1px solid var(--divider); background: #fff; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+    .side-head { min-height: 52px; padding: 14px 14px 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .side-title { font-size: 14px; font-weight: 600; }
+    .counter { font-size: 12px; color: var(--text-3); }
+    .side-scroll { min-height: 0; overflow: hidden; padding: 2px 8px 12px; }
+    .template { position: relative; width: 100%; min-height: 52px; padding: 8px 36px 8px 12px; border: 1px solid transparent; border-radius: 6px; display: grid; align-content: center; gap: 2px; }
+    .template + .template { margin-top: 2px; }
+    .template.selected { background: var(--primary-soft); color: #1c4cba; }
+    .template.selected::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 2px; background: var(--primary); }
+    .template-name { min-width: 0; font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .template-meta { display: flex; gap: 6px; font-size: 12px; color: var(--text-3); }
+    .template.selected .template-meta { color: #4e7ad9; }
+    .tag { color: #1f6f43; background: #eaf8ef; padding: 0 5px; border-radius: 3px; }
+    .more { position: absolute; right: 6px; top: 10px; width: 28px; height: 28px; border: 0; border-radius: 5px; background: transparent; color: var(--text-2); font-size: 18px; letter-spacing: 1px; }
+    .side-foot { padding: 12px; border-top: 1px solid var(--divider); }
+    .new-template { width: 100%; }
+    .main { min-width: 0; min-height: 0; display: grid; grid-template-rows: 52px minmax(0, 1fr); }
+    .toolbar { min-width: 0; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 1px solid var(--divider); background: #fff; }
+    .toolbar-title { min-width: 0; display: grid; gap: 1px; }
+    .toolbar-title strong { font-size: 15px; line-height: 21px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .toolbar-title span { color: var(--text-3); font-size: 12px; line-height: 16px; }
+    .toolbar .actions { gap: 6px; }
+    .canvas { position: relative; min-height: 0; overflow: hidden; background: var(--workspace); }
+    .preview-scroll { position: absolute; inset: 0; overflow: hidden; padding: 24px 22px 0; }
+    .paper { position: relative; width: min(520px, calc(100% - 28px)); height: 610px; margin: 0 auto; background: #fff; box-shadow: 0 2px 8px rgba(31,35,41,.11); padding: 42px 54px; font-family: "Songti SC", SimSun, serif; color: #111; }
+    .paper h2 { margin: 0 0 24px; text-align: center; font-size: 24px; }
+    .doc-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 34px; row-gap: 18px; font-size: 15px; line-height: 1.6; }
+    .doc-item { border-bottom: 1px solid #d9d9d9; padding-bottom: 7px; }
+    .doc-wide { grid-column: 1 / -1; }
+    .stamp { position: fixed; right: 8px; bottom: 6px; z-index: 30; color: rgba(100,106,115,.7); font-size: 10px; pointer-events: none; }
+    .batch-sidebar { grid-template-rows: auto minmax(0, 1fr); }
+    .batch-summary { padding: 4px 14px 14px; }
+    .metric { display: flex; align-items: baseline; gap: 6px; margin: 2px 0 16px; }
+    .metric strong { font-size: 24px; line-height: 28px; }
+    .metric span { color: var(--text-2); font-size: 12px; }
+    .summary-line { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--divider); font-size: 13px; }
+    .summary-line span { color: var(--text-3); }
+    .record-list { margin-top: 10px; display: grid; gap: 4px; }
+    .record { height: 34px; padding: 0 9px; display: flex; align-items: center; gap: 8px; border-radius: 5px; background: var(--subtle); font-size: 12px; }
+    .record b { font-weight: 500; }
+    .record small { margin-left: auto; color: var(--text-3); }
+    .pages { position: absolute; inset: 0; overflow: hidden; padding: 20px 18px 0; display: flex; justify-content: center; gap: 14px; align-items: flex-start; }
+    .page-mini { width: 182px; height: 258px; flex: 0 0 auto; background: #fff; box-shadow: 0 2px 7px rgba(31,35,41,.12); padding: 20px 16px; color: #222; font-family: "Songti SC", SimSun, serif; }
+    .page-mini h3 { font-size: 13px; text-align: center; margin: 0 0 14px; }
+    .mini-row { height: 20px; margin-top: 8px; border-bottom: 1px solid #d8d8d8; font-size: 8px; }
+    .edit-appbar .crumb::before { display: none; }
+    .back { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); font-size: 13px; }
+    .save-state { display: inline-flex; align-items: center; gap: 5px; color: #d46b08; font-size: 12px; }
+    .save-state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #d46b08; }
+    .edit-workspace { grid-template-columns: 228px minmax(0, 1fr); }
+    .edit-sidebar { grid-template-rows: 44px minmax(0, 1fr); }
+    .tabs { height: 44px; display: flex; padding: 0 12px; border-bottom: 1px solid var(--divider); gap: 18px; }
+    .tab { position: relative; display: flex; align-items: center; font-size: 14px; color: var(--text-2); }
+    .tab.active { color: var(--text); font-weight: 500; }
+    .tab.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--primary); }
+    .panel-scroll { min-height: 0; overflow: hidden; padding: 12px; }
+    .group + .group { margin-top: 16px; }
+    .group-title { margin: 0 0 7px; font-size: 12px; color: var(--text-3); font-weight: 500; }
+    .source { height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 9px; border-radius: 5px; font-size: 13px; }
+    .source:hover, .source.focused { background: var(--subtle); }
+    .source.focused { outline: 2px solid rgba(51,112,255,.24); }
+    .source-icon { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 4px; color: #4569a8; background: #edf3ff; font-size: 11px; }
+    .source small { margin-left: auto; color: var(--text-3); }
+    .designer { min-width: 0; min-height: 0; display: grid; grid-template-rows: 42px minmax(0, 1fr); background: var(--workspace); }
+    .designer-tools { display: flex; align-items: center; gap: 4px; padding: 0 10px; background: #fff; border-bottom: 1px solid var(--divider); }
+    .tool { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 5px; color: var(--text-2); font-size: 12px; }
+    .tool.active { color: var(--primary); background: var(--primary-soft); }
+    .divider { width: 1px; height: 18px; margin: 0 5px; background: var(--divider); }
+    .zoom { margin-left: auto; color: var(--text-3); font-size: 12px; }
+    .design-area { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 172px; }
+    .design-stage { position: relative; overflow: hidden; }
+    .ruler-x { position: absolute; left: 0; right: 0; top: 0; height: 18px; background: repeating-linear-gradient(90deg,#f7f8fa 0 9px,#d8dadd 10px); border-bottom: 1px solid var(--divider); }
+    .edit-paper { position: absolute; top: 34px; left: 50%; width: 370px; height: 500px; transform: translateX(-50%); background: #fff; box-shadow: 0 1px 7px rgba(31,35,41,.13); }
+    .selected-element { position: absolute; left: 72px; top: 88px; width: 226px; height: 42px; border: 1px solid var(--primary); background: rgba(232,240,255,.35); display: flex; align-items: center; padding: 0 10px; font-size: 13px; }
+    .handle { position: absolute; width: 6px; height: 6px; border: 1px solid var(--primary); background: #fff; }
+    .h1 { left: -4px; top: -4px; } .h2 { right: -4px; top: -4px; } .h3 { left: -4px; bottom: -4px; } .h4 { right: -4px; bottom: -4px; }
+    .properties { background: #fff; border-left: 1px solid var(--divider); padding: 12px; }
+    .properties h3 { margin: 0 0 12px; font-size: 14px; }
+    .field-label { display: block; margin: 12px 0 6px; color: var(--text-2); font-size: 12px; }
+    .input { min-height: 32px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; font-size: 12px; color: var(--text); background: #fff; }
+    .token { color: var(--primary); background: var(--primary-soft); border-radius: 3px; padding: 1px 3px; }
+    .choice-row { display: flex; gap: 6px; }
+    .choice { flex: 1; height: 28px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 5px; font-size: 12px; }
+    .choice.active { color: var(--primary); border-color: #8bb0ff; background: #f3f7ff; }
+    .state-page { width: 100vw; height: 100vh; overflow: hidden; background: var(--subtle); padding: 22px 28px; }
+    .state-page h1 { margin: 0 0 4px; font-size: 18px; line-height: 26px; }
+    .state-page > p { margin: 0 0 18px; color: var(--text-2); font-size: 12px; }
+    .state-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .state-card { min-height: 198px; padding: 16px; border: 1px solid var(--divider); border-radius: 8px; background: #fff; }
+    .state-card h2 { margin: 0 0 13px; font-size: 14px; }
+    .state-row { display: flex; align-items: center; gap: 10px; min-height: 38px; }
+    .state-caption { width: 58px; color: var(--text-3); font-size: 12px; }
+    .btn.hover { border-color: #8bb0ff; background: #f6f9ff; }
+    .btn.pressed { border-color: #1c4cba; background: #1c4cba; color: #fff; }
+    .btn.focus { outline: 2px solid rgba(51,112,255,.28); outline-offset: 1px; }
+    .menu-demo { position: relative; display: grid; grid-template-columns: 176px 142px; gap: 10px; align-items: start; }
+    .menu-demo .template { background: var(--primary-soft); }
+    .menu { padding: 5px; border: 1px solid var(--divider); border-radius: 7px; background: #fff; box-shadow: 0 6px 18px rgba(31,35,41,.12); }
+    .menu-item { height: 30px; padding: 0 9px; display: flex; align-items: center; border-radius: 5px; font-size: 13px; }
+    .menu-item:hover { background: var(--subtle); }
+    .menu-item.danger { color: var(--danger); border-top: 1px solid var(--divider); margin-top: 4px; padding-top: 4px; height: 34px; }
+    .status-sample { min-height: 52px; padding: 10px 12px; border-radius: 6px; display: flex; gap: 9px; align-items: flex-start; font-size: 13px; }
+    .status-sample + .status-sample { margin-top: 7px; }
+    .status-sample.loading { background: #f5f8ff; }
+    .status-sample.error { background: #fff3f2; color: #8f2520; }
+    .status-sample.empty { border: 1px dashed var(--border); color: var(--text-2); }
+    .spinner { width: 14px; height: 14px; margin-top: 2px; border: 2px solid #baceff; border-top-color: var(--primary); border-radius: 50%; }
+    .status-copy { display: grid; gap: 2px; }
+    .status-copy small { color: var(--text-3); font-size: 11px; }
+    .inline-action { margin-left: auto; color: var(--primary); white-space: nowrap; }
+
+    /* 方案 B：更窄目录、更强画布占比、选中模板摘要化 */
+    .variant-b { --sidebar: 188px; }
+    .variant-b.app { grid-template-rows: 45px minmax(0, 1fr); }
+    .variant-b .appbar { padding: 0 12px; }
+    .variant-b .brand-mark { width: 22px; height: 22px; border-radius: 5px; }
+    .variant-b .brand-name { font-size: 15px; }
+    .variant-b .workspace { grid-template-columns: var(--sidebar) minmax(0, 1fr); }
+    .variant-b .sidebar { background: #fafbfc; }
+    .variant-b .side-head { min-height: 46px; padding: 10px 10px 6px; }
+    .variant-b .side-scroll { padding: 2px 6px 10px; }
+    .variant-b .template { min-height: 46px; padding: 7px 32px 7px 10px; }
+    .variant-b .template.selected { background: #fff; box-shadow: inset 0 0 0 1px #baceff; }
+    .variant-b .template.selected::before { left: -1px; top: 8px; bottom: 8px; }
+    .variant-b .template-meta .kind { display: none; }
+    .variant-b .side-foot { padding: 8px; }
+    .variant-b .main { grid-template-rows: 48px minmax(0, 1fr); }
+    .variant-b .toolbar { padding: 0 12px 0 16px; }
+    .variant-b .preview-scroll { padding-top: 18px; }
+    .variant-b .paper { width: min(548px, calc(100% - 16px)); }
+    .variant-b .edit-workspace { grid-template-columns: 208px minmax(0, 1fr); }
+    .variant-b .edit-sidebar { background: #fff; }
+    .variant-b .tabs { padding: 0 10px; gap: 14px; }
+    .variant-b .panel-scroll { padding: 10px; }
+
+    @media (max-width: 760px) {
+      :root { --sidebar: 176px; }
+      .variant-b { --sidebar: 164px; }
+      .crumb { display: none; }
+      .appbar { padding: 0 10px; gap: 8px; }
+      .actions { gap: 4px; }
+      .btn { padding: 0 9px; }
+      .btn .optional { display: none; }
+      .paper { width: 440px; transform: scale(.82); transform-origin: top center; }
+      .edit-workspace, .variant-b .edit-workspace { grid-template-columns: 188px minmax(0,1fr); }
+      .properties { display: none; }
+      .design-area { grid-template-columns: 1fr; }
+      .edit-paper { width: 338px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <div class="stamp">Goal v7 设计证据 · 非产品页面</div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const variant = params.get('variant') === 'b' ? 'b' : 'a';
+    const mode = ['preview','edit','batch','states'].includes(params.get('mode')) ? params.get('mode') : 'preview';
+    const templates = [
+      ['仓库订单单','默认排版','默认'],
+      ['客户签收单','默认排版',''],
+      ['物流面单','标签排版',''],
+      ['连续拣货单','连续排版',''],
+      ['售后登记单','默认排版','']
+    ];
+    const fields = ['订单编号','客户名称','联系电话','商品名称','数量','订单金额','发货日期','备注'];
+
+    function button(label, type='secondary', extra='') {
+      return `<button class="btn ${type} ${extra}">${label}</button>`;
+    }
+    function appbar(extraActions, editing=false) {
+      if (editing) {
+        return `<header class="appbar edit-appbar">
+          <div class="back">← 返回预览</div>
+          <div class="crumb">仓库订单单</div>
+          <span class="save-state">有未保存修改</span>
+          <div class="actions">${button('更多','tertiary')}${button('保存模板','primary')}</div>
+        </header>`;
+      }
+      return `<header class="appbar">
+        <div class="brand"><span class="brand-mark">印</span><span class="brand-name">多维打印</span></div>
+        <div class="crumb">仓库订单表 · PO-0001</div>
+        <div class="actions">${extraActions}</div>
+      </header>`;
+    }
+    function templateSidebar() {
+      return `<aside class="sidebar">
+        <div class="side-head"><span class="side-title">模板</span><span class="counter">5 个</span></div>
+        <div class="side-scroll">
+          ${templates.map((t,i)=>`<div class="template ${i===0?'selected':''}">
+            <span class="template-name">${t[0]}</span>
+            <span class="template-meta"><span class="kind">${t[1]}</span>${t[2]?`<span class="tag">${t[2]}</span>`:''}</span>
+            ${i===0?'<button class="more" aria-label="更多模板操作">···</button>':''}
+          </div>`).join('')}
+        </div>
+        <div class="side-foot">${button('＋ 新建模板','secondary','new-template')}</div>
+      </aside>`;
+    }
+    function paper() {
+      return `<div class="paper">
+        <h2>仓库订单单</h2>
+        <div class="doc-grid">
+          <div class="doc-item">订单编号：PO-0001</div><div class="doc-item">发货日期：2026-10-07</div>
+          <div class="doc-item">客户名称：北京恒信商贸有限公司</div><div class="doc-item">联系电话：13900139002</div>
+          <div class="doc-item">商品名称：无线鼠标</div><div class="doc-item">数量：50</div>
+          <div class="doc-item">订单金额：¥ 3,950.00</div><div class="doc-item">打印日期：2026-10-07</div>
+          <div class="doc-item doc-wide">备注：已发货，正在派送</div>
+        </div>
+      </div>`;
+    }
+    function preview() {
+      return `<div class="app variant-${variant}">
+        ${appbar(`${button('<span class="optional">选择</span>打印记录','secondary')}${button('导出 PDF','secondary')}${button('打印','primary')}`)}
+        <div class="workspace">
+          ${templateSidebar()}
+          <main class="main">
+            <div class="toolbar">
+              <div class="toolbar-title"><strong>仓库订单单</strong><span>默认模板 · A4 纵向</span></div>
+              <div class="actions">${button('编辑模板','secondary')}</div>
+            </div>
+            <div class="canvas"><div class="preview-scroll">${paper()}</div></div>
+          </main>
+        </div>
+      </div>`;
+    }
+    function editorSidebar() {
+      return `<aside class="sidebar edit-sidebar">
+        <div class="tabs"><div class="tab active">数据源</div><div class="tab">组件</div></div>
+        <div class="panel-scroll">
+          <section class="group"><h3 class="group-title">字段</h3>
+            ${fields.map((f,i)=>`<div class="source ${i===1?'focused':''}"><span class="source-icon">字</span><span>${f}</span><small>复制</small></div>`).join('')}
+          </section>
+          <section class="group"><h3 class="group-title">系统</h3><div class="source"><span class="source-icon">系</span><span>打印日期</span><small>复制</small></div></section>
+        </div>
+      </aside>`;
+    }
+    function designer() {
+      return `<main class="designer">
+        <div class="designer-tools">
+          <div class="tool">↶</div><div class="tool">↷</div><span class="divider"></span>
+          <div class="tool active">T</div><div class="tool">▦</div><div class="tool">—</div><span class="divider"></span>
+          <div class="tool">左</div><div class="tool">中</div><div class="tool">右</div><span class="zoom">90%</span>
+        </div>
+        <div class="design-area">
+          <div class="design-stage"><div class="ruler-x"></div><div class="edit-paper">
+            <div class="selected-element">客户：<span class="token">@客户名称</span> · <span class="token">@联系电话</span>
+              <i class="handle h1"></i><i class="handle h2"></i><i class="handle h3"></i><i class="handle h4"></i>
+            </div>
+          </div></div>
+          <aside class="properties"><h3>文本属性</h3>
+            <label class="field-label">内容</label><div class="input">客户：<span class="token">@客户名称</span><br><span class="token">@联系电话</span></div>
+            <label class="field-label">字号</label><div class="input">14 px</div>
+            <label class="field-label">对齐</label><div class="choice-row"><div class="choice active">左</div><div class="choice">中</div><div class="choice">右</div></div>
+          </aside>
+        </div>
+      </main>`;
+    }
+    function edit() {
+      return `<div class="app variant-${variant}">${appbar('',true)}<div class="workspace edit-workspace">${editorSidebar()}${designer()}</div></div>`;
+    }
+    function batchSidebar() {
+      return `<aside class="sidebar batch-sidebar">
+        <div class="side-head"><span class="side-title">本次打印</span><span class="tag">只读</span></div>
+        <div class="batch-summary">
+          <div class="metric"><strong>3</strong><span>条记录</span></div>
+          <div class="summary-line"><span>模板</span><b>仓库订单单</b></div>
+          <div class="summary-line"><span>排版</span><b>默认 · 每条新页</b></div>
+          <div class="record-list">
+            <div class="record"><b>PO-0001</b><small>北京恒信</small></div>
+            <div class="record"><b>PO-0002</b><small>上海锐科</small></div>
+            <div class="record"><b>PO-0003</b><small>杭州星汇</small></div>
+          </div>
+        </div>
+      </aside>`;
+    }
+    function batchPages() {
+      const orders=[['PO-0001','北京恒信'],['PO-0002','上海锐科'],['PO-0003','杭州星汇']];
+      return `<div class="pages">${orders.map(o=>`<div class="page-mini"><h3>仓库订单单</h3><div class="mini-row">订单：${o[0]}</div><div class="mini-row">客户：${o[1]}</div><div class="mini-row">商品：无线鼠标</div><div class="mini-row">数量：50</div><div class="mini-row">日期：2026-10-07</div></div>`).join('')}</div>`;
+    }
+    function batch() {
+      const actions=`${button('重新选择','secondary')}${button('退出批量','tertiary')}${button('导出 3 条 PDF','secondary')}${button('打印 3 条','primary')}`;
+      return `<div class="app variant-${variant}">${appbar(actions)}<div class="workspace">${batchSidebar()}<main class="main"><div class="toolbar"><div class="toolbar-title"><strong>批量打印预览</strong><span>3 条记录 · 3 页 A4</span></div></div><div class="canvas">${batchPages()}</div></main></div></div>`;
+    }
+    function states() {
+      return `<div class="state-page">
+        <h1>共享交互状态</h1><p>两套视觉方向共用同一状态语义、可访问焦点和恢复逻辑。</p>
+        <div class="state-grid">
+          <section class="state-card"><h2>按钮状态</h2>
+            <div class="state-row"><span class="state-caption">默认</span>${button('导出 PDF','secondary')}${button('打印','primary')}</div>
+            <div class="state-row"><span class="state-caption">悬停</span>${button('导出 PDF','secondary','hover')}${button('打印','primary','hover')}</div>
+            <div class="state-row"><span class="state-caption">按下</span>${button('打印','pressed')}</div>
+            <div class="state-row"><span class="state-caption">焦点</span>${button('保存模板','primary','focus')}${button('打印中…','disabled')}</div>
+          </section>
+          <section class="state-card"><h2>模板管理菜单</h2>
+            <div class="menu-demo"><div class="template selected"><span class="template-name">仓库订单单</span><span class="template-meta"><span>默认排版</span><span class="tag">默认</span></span><button class="more">···</button></div>
+              <div class="menu"><div class="menu-item">重命名</div><div class="menu-item">设为默认模板</div><div class="menu-item danger">删除模板</div></div></div>
+          </section>
+          <section class="state-card"><h2>读取与错误</h2>
+            <div class="status-sample loading"><span class="spinner"></span><span class="status-copy">正在读取 3 条记录<small>旧预览保持可见，输出暂时不可用</small></span></div>
+            <div class="status-sample error"><span>!</span><span class="status-copy">批量读取超时<small>原打印任务已保留</small></span><span class="inline-action">重试</span></div>
+          </section>
+          <section class="state-card"><h2>空状态与短暂反馈</h2>
+            <div class="status-sample empty"><span>＋</span><span class="status-copy">还没有保存的模板<small>自动模板仍可直接预览和打印</small></span><span class="inline-action">新建模板</span></div>
+            <div class="status-sample loading"><span style="color:var(--success)">✓</span><span class="status-copy">模板已保存<small>反馈自动消失，不长期占用工作区</small></span></div>
+          </section>
+        </div>
+      </div>`;
+    }
+    document.getElementById('root').innerHTML = mode === 'edit' ? edit() : mode === 'batch' ? batch() : mode === 'states' ? states() : preview();
+  </script>
+</body>
+</html>
