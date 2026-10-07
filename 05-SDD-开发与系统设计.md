@@ -29,6 +29,7 @@
 | TemplateRepository | base/table、版本化模板集合 | 多模板、唯一默认项或只读回退结果 | bridge 未设置键实测返回 `{}`，空普通对象按无值处理；v1 只读迁移；非空不可读模板不覆盖，回退会话禁用保存；保存前递归移除运行记录、记录 ID、设计器变量、表格样本和凭证形态字段，读取含禁存数据的旧信封时零写入拒绝；权限与冲突显式 |
 | DesignerAdapter | 模板、变量、任务 | canonical rendered pages、编辑、打印、已校验 PDF Blob | 直接调用安装版 Web Component；主预览与打印复用同一页对象；PDF 先校验文件头、页数和大小再提交下载，不造替代引擎 |
 | WorkspaceShell | PrintJob、模板集合、DesignerAdapter | `WorkspaceMode` 与 `WorkspaceSurface`、所选模板、统一编辑入口 | `getWorkspaceSurface(mode, batchMode)` 将工作台表面归一为 `single-preview`、`single-edit` 或 `batch-preview`；默认预览并选默认模板；编辑时目录隐藏，左侧组件可拖入、数据源只可复制，右侧仍为真实 Web Component；批量预览只读且不暴露模板编辑操作 |
+| WorkbenchVisualSystem | 现有 WorkspaceShell 状态和操作 | 统一 Token、操作层级、纸张画布、响应式与可访问状态 | 只修改外层语义结构、CSS 和纯展示交互；业务入口仍调用原有 handler；锁定 `src/core`、`src/engine`、`src/host`、模板协议和输出算法。设计器 ready 后固定浅色主题，使真实画布与外层浅色工作台一致，不另造编辑器 |
 
 组件拖拽继续采用锁定版 `vue-print-designer@1.7.39` 的 `application/json` `{type}` 契约，让引擎创建默认组件。数据源不再写入拖拽载荷；复制动作携带稳定字段/系统 ID 与当前标签，粘贴适配层把稳定绑定插入当前文本组件，同时只向用户显示 `@字段名`。关联数组仍由表格组件的专用配置处理。该适配随引擎版本升级复核；不得恢复“拖数据源创建元素”的旧路径。
 
@@ -96,6 +97,8 @@ PDF 输出不再调用上游“直接保存”作为黑盒终点。`DesignerAdap
 批次栏由实际 Vue 组件负责数量和最多五条摘要呈现，纯会话模型仍是 ID、顺序和摘要的事实源。网关将 SDK 的 `isPrimary` 带入 `NormalizedField`，摘要构造器按该标记选择字段；只有兼容旧元数据时才回退首个非关联字段，空值回退记录 ID。旧模板加载/刷新预览任务只能在自身 revision 仍有效时释放工作台 busy；过期渲染不能提前开放新上下文的操作。引擎 HTML 的预览页间距在打印样式中被清除，故 HTML 对象同源不等于 CSS 分页一致；正式浏览器逐页验收是必要条件。
 
 当前正式表完整 10 条已经验证该编排：摘要前五条加剩余数量，确认至 `batch-preview` 完成为 1,248 ms，10 个 canonical 页面保持 `PO-0001` 至 `PO-0010` 顺序，退出后回到单条；实际 PDF 同样为 10 页 A4，逐页顺序和值正确。此证据不改变 50/51、异常恢复和系统打印的独立验收门。
+
+Goal v6 的视觉改造建立在远程可恢复基线 `2a2a8efb32b4bd2c791f50ba3e569de386f5eacd` / `baseline-pre-style-redesign-2026-10-07` 上，只在 `codex/modern-workbench-style` 迭代。视觉状态不新增第二套业务状态：顶部上下文、模板目录、编辑侧栏、批次栏、加载/错误和纸张画布都只消费已有 computed 与 handler。输出操作按“打印主按钮、PDF 次按钮”分层，模板管理动作默认弱化但保持键盘可达。回归一旦触及锁定业务目录或改变原 handler 调用，即视为越界并停止。
 
 `renderPrintJobCandidate` 在候选渲染或变量恢复失败时回退已提交任务的变量；如果请求 revision 已过期，则停止后续候选渲染并不主动回写旧变量。WorkspaceShell 仅在该事务返回完整页面且宿主上下文仍匹配后提交新任务。此契约的单元测试不证明飞书宿主切换时引擎内部异步渲染与新模板绑定完全无交错，正式 `E2E-BATCH-02` 必须覆盖渲染中切换。
 

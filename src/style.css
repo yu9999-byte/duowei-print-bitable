@@ -1,11 +1,34 @@
 :root {
-  color: #202124;
-  background: #f6f7f9;
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --dw-color-accent: #3370ff;
+  --dw-color-accent-hover: #2858d7;
+  --dw-color-accent-pressed: #234fc2;
+  --dw-color-accent-soft: #edf3ff;
+  --dw-color-accent-border: #c9d8ff;
+  --dw-color-text: #1f2329;
+  --dw-color-text-secondary: #646a73;
+  --dw-color-text-tertiary: #8f959e;
+  --dw-color-surface: #ffffff;
+  --dw-color-surface-subtle: #f7f8fa;
+  --dw-color-canvas: #e9edf2;
+  --dw-color-border: #dee0e3;
+  --dw-color-border-strong: #c9cdd4;
+  --dw-color-success: #2f8f5b;
+  --dw-color-warning: #a96b13;
+  --dw-color-danger: #c84b45;
+  --dw-radius-control: 8px;
+  --dw-radius-panel: 14px;
+  --dw-shadow-panel: 0 8px 28px rgb(31 35 41 / 7%);
+  --dw-shadow-paper: 0 2px 5px rgb(31 35 41 / 8%), 0 18px 48px rgb(31 35 41 / 13%);
+  color: var(--dw-color-text);
+  background: var(--dw-color-surface-subtle);
+  font-family: "Segoe UI Variable", "SF Pro Text", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; }
+html { background: var(--dw-color-surface-subtle); }
+body { margin: 0; min-width: 320px; background: var(--dw-color-surface-subtle); }
 button { cursor: pointer; }
 
 #duowei-print-root { display: none; }
