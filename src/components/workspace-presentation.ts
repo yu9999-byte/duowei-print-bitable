@@ -4,6 +4,7 @@ export type WorkspacePresentation = {
   showBrand: boolean;
   showTemplateDirectory: boolean;
   showEditorPanel: boolean;
+  showInlineEditorPanel: boolean;
   showBatchSummary: boolean;
   showWorkspaceToolbar: boolean;
   showRecordPicker: boolean;
@@ -21,6 +22,7 @@ const PRESENTATIONS: Record<WorkspaceSurface, WorkspacePresentation> = {
     showBrand: true,
     showTemplateDirectory: true,
     showEditorPanel: false,
+    showInlineEditorPanel: false,
     showBatchSummary: false,
     showWorkspaceToolbar: true,
     showRecordPicker: true,
@@ -36,6 +38,7 @@ const PRESENTATIONS: Record<WorkspaceSurface, WorkspacePresentation> = {
     showBrand: false,
     showTemplateDirectory: false,
     showEditorPanel: true,
+    showInlineEditorPanel: false,
     showBatchSummary: false,
     showWorkspaceToolbar: false,
     showRecordPicker: false,
@@ -51,16 +54,33 @@ const PRESENTATIONS: Record<WorkspaceSurface, WorkspacePresentation> = {
     showBrand: true,
     showTemplateDirectory: false,
     showEditorPanel: false,
+    showInlineEditorPanel: false,
     showBatchSummary: true,
     showWorkspaceToolbar: true,
     showRecordPicker: true,
     showExitBatch: true,
     showOutputs: true,
-    showEditTemplate: false,
+    showEditTemplate: true,
     showSave: false,
     showBack: false,
     showDesigner: false,
     showPreview: true,
+  },
+  "batch-edit": {
+    showBrand: true,
+    showTemplateDirectory: false,
+    showEditorPanel: false,
+    showInlineEditorPanel: true,
+    showBatchSummary: true,
+    showWorkspaceToolbar: true,
+    showRecordPicker: false,
+    showExitBatch: false,
+    showOutputs: false,
+    showEditTemplate: false,
+    showSave: true,
+    showBack: true,
+    showDesigner: true,
+    showPreview: false,
   },
 };
 

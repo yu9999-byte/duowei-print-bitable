@@ -261,6 +261,139 @@ test("CT-DES-06: paste and focusout events complete the friendly edit, stable sa
   stop();
 });
 
+test("CT-DES-07: plain Enter inserts a newline and blur preserves stable tokens and resolved values", async () => {
+  const orderToken = `@${fieldDataSourceId("order-no")}`;
+  const priceToken = `@${fieldDataSourceId("price")}`;
+  const root = new EventTarget();
+  let loadedTemplate: any;
+  let testData: Record<string, unknown> = {};
+  const designer = {
+    shadowRoot: root,
+    loadTemplateData(template: unknown) { loadedTemplate = structuredClone(template); return true; },
+    getTemplateData() { return structuredClone(loadedTemplate); },
+    async setTestData(data: Record<string, unknown>) { testData = data; },
+    async setVariables() {},
+    setAvailableVariables() {},
+  } as unknown as DesignerElement;
+  const job: PrintJob = {
+    source: { baseId: "base", tableId: "table", recordIds: ["rec"] },
+    table: { name: "订单", fields: [
+      { id: "order-no", name: "订单编号", type: "1" },
+      { id: "price", name: "单价", type: "2" },
+    ] },
+    documents: [{ recordId: "rec", values: { 订单编号: "PO-0001", 单价: "¥45.00" } }],
+    generatedAt: "2026-10-08T10:00:00.000Z",
+  };
+  const stop = installDataSourceEditingLifecycle(designer);
+  await bindPrintJob(designer, {
+    pages: [{ id: "p", elements: [{
+      id: "summary",
+      type: "text",
+      content: `订单编号：${orderToken}单价：${priceToken}`,
+      variable: orderToken,
+    }] }],
+    canvasSize: { width: 794, height: 1123 },
+  }, job);
+
+  const friendly = "订单编号：@订单编号单价：@单价";
+  const insertion = "订单编号：@订单编号".length;
+  let inputEvents = 0;
+  const wrapper = { getAttribute: (name: string) => name === "data-element-id" ? "summary" : null };
+  const textarea = {
+    tagName: "TEXTAREA",
+    value: friendly,
+    selectionStart: insertion,
+    selectionEnd: insertion,
+    closest: (selector: string) => selector === ".element-wrapper[data-element-id]"
+      ? wrapper
+      : selector === ".element-wrapper[data-element-id] [data-text-content]" ? {} : null,
+    setRangeText(text: string, start: number, end: number) {
+      this.value = this.value.slice(0, start) + text + this.value.slice(end);
+      this.selectionStart = this.selectionEnd = start + text.length;
+    },
+    dispatchEvent(event: Event) {
+      if (event.type === "input") inputEvents += 1;
+      return true;
+    },
+  };
+  const keydown = new Event("keydown", { bubbles: true, cancelable: true });
+  Object.defineProperties(keydown, {
+    key: { value: "Enter" },
+    shiftKey: { value: false },
+    ctrlKey: { value: false },
+    metaKey: { value: false },
+    altKey: { value: false },
+    composedPath: { value: () => [textarea, root] },
+  });
+  root.dispatchEvent(keydown);
+
+  assert.equal(keydown.defaultPrevented, true);
+  assert.equal(inputEvents, 1);
+  assert.equal(textarea.value, "订单编号：@订单编号\n单价：@单价");
+
+  // Vue's v-model updates the engine editing value on the synthetic input event;
+  // this assignment models the locked engine's subsequent blur commit.
+  loadedTemplate.pages[0].elements[0].content = textarea.value;
+  const focusout = new Event("focusout");
+  Object.defineProperty(focusout, "composedPath", { value: () => [textarea, root] });
+  root.dispatchEvent(focusout);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const runtimeElement = loadedTemplate.pages[0].elements[0];
+  assert.equal(testData[runtimeElement.variable.slice(1)], "订单编号：PO-0001\n单价：¥45.00");
+  const saved = getPersistentTemplateData(designer);
+  assert.equal((saved.pages as any)[0].elements[0].content,
+    `订单编号：${orderToken}\n单价：${priceToken}`);
+  assert.ok(!JSON.stringify(saved).includes("PO-0001"));
+  stop();
+});
+
+test("CT-DES-07: modified Enter shortcuts and Escape keep the locked designer semantics", () => {
+  const root = new EventTarget();
+  let inputEvents = 0;
+  let rangeTextCalls = 0;
+  const textarea = {
+    tagName: "TEXTAREA",
+    value: "订单编号：@订单编号",
+    selectionStart: 5,
+    selectionEnd: 5,
+    closest: () => null,
+    setRangeText() { rangeTextCalls += 1; },
+    dispatchEvent(event: Event) {
+      if (event.type === "input") inputEvents += 1;
+      return true;
+    },
+  };
+  const designer = { shadowRoot: root } as unknown as DesignerElement;
+  const stop = installDataSourceEditingLifecycle(designer);
+  const cases = [
+    { key: "Enter", shiftKey: true },
+    { key: "Enter", ctrlKey: true },
+    { key: "Enter", metaKey: true },
+    { key: "Enter", altKey: true },
+    { key: "Escape" },
+  ];
+
+  for (const modifiers of cases) {
+    const keydown = new Event("keydown", { bubbles: true, cancelable: true });
+    Object.defineProperties(keydown, {
+      key: { value: modifiers.key },
+      shiftKey: { value: Boolean(modifiers.shiftKey) },
+      ctrlKey: { value: Boolean(modifiers.ctrlKey) },
+      metaKey: { value: Boolean(modifiers.metaKey) },
+      altKey: { value: Boolean(modifiers.altKey) },
+      composedPath: { value: () => [textarea, root] },
+    });
+    root.dispatchEvent(keydown);
+    assert.equal(keydown.defaultPrevented, false, `${modifiers.key} should reach the designer`);
+  }
+
+  assert.equal(rangeTextCalls, 0);
+  assert.equal(inputEvents, 0);
+  assert.equal(textarea.value, "订单编号：@订单编号");
+  stop();
+});
+
 test("CT-DES-06: saving does not clear unrelated engine text variables", async () => {
   let template: any;
   const designer = {

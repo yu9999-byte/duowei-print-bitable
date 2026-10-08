@@ -40,6 +40,7 @@ import {
   type BatchPrintSession,
 } from "./core/batch-print-session.ts";
 import { prepareBatchCandidate } from "./core/batch-candidate-transaction.ts";
+import { commitBatchTemplateEdit } from "./core/batch-template-edit.ts";
 import type { RenderedPrintJob } from "./engine/designer-adapter.ts";
 import {
   buildDataSourceClipboardPayload,
@@ -101,6 +102,7 @@ const batchRetryAvailable = ref(false);
 const designerReady = ref(false);
 const batchSession = ref<BatchPrintSession>(createSinglePrintSession(null));
 const renderedPages = ref<RenderedPrintJob | null>(null);
+const batchPreviewStale = ref(false);
 const status = ref("正在读取当前记录…");
 const error = ref("");
 const busy = ref(false);
@@ -271,6 +273,7 @@ function invalidateContext() {
   workspaceMode.value = initialWorkspaceMode();
   batchSession.value = createSinglePrintSession(null);
   renderedPages.value = null;
+  batchPreviewStale.value = false;
   status.value = "当前记录已切换，请重新读取";
 }
 
@@ -314,6 +317,7 @@ async function loadRecords(useBatchPicker = false) {
     templateWarning.value = "";
     workspaceMode.value = initialWorkspaceMode();
     renderedPages.value = null;
+    batchPreviewStale.value = false;
   }
   try {
     const active = await getActiveSelection();
@@ -386,6 +390,7 @@ async function loadBatchCandidate() {
     batchSession.value = candidate.session;
     renderedPages.value = candidate.rendered;
     previewHtml.value = candidate.previewHtml;
+    batchPreviewStale.value = false;
     previewError.value = "";
     workspaceMode.value = "preview";
     status.value = `已选 ${ids.length} 条，批次预览已生成`;
@@ -428,6 +433,7 @@ async function exitBatchMode() {
     batchSession.value = createSinglePrintSession(active.recordId);
     renderedPages.value = rendered;
     previewHtml.value = composeRenderedPrintPages(rendered);
+    batchPreviewStale.value = false;
     previewError.value = "";
     workspaceMode.value = "preview";
     status.value = "已返回当前记录";
@@ -496,6 +502,7 @@ async function loadTemplateAndPreview(
       await assertCurrentContext(active, revision);
       renderedPages.value = rendered;
       previewHtml.value = composeRenderedPrintPages(rendered);
+      batchPreviewStale.value = false;
     } catch (cause) {
       if (revision !== contextRevision) return false;
       previewError.value = cause instanceof Error ? cause.message : "打印预览生成失败";
@@ -562,6 +569,7 @@ async function refreshPreview(): Promise<boolean> {
     if (active) await assertCurrentContext(active, revision);
     renderedPages.value = rendered;
     previewHtml.value = composeRenderedPrintPages(rendered);
+    batchPreviewStale.value = false;
     status.value = "打印预览已刷新";
     return true;
   } catch (cause) {
@@ -612,10 +620,12 @@ async function previewOutput() {
 }
 
 async function saveTemplate(options: { returnToPreview?: boolean; allowContextChange?: boolean } = {}): Promise<boolean> {
-  if (isBatchMode.value || !designerRef.value || !selection.value || !templateSaveAllowed.value) return false;
+  if (!designerRef.value || !selection.value || !templateSaveAllowed.value
+    || (workspaceMode.value !== "edit" && !options.returnToPreview)) return false;
   closeTransientMenus();
   const active = selection.value;
   const revision = contextRevision;
+  const batchEditing = isBatchMode.value;
   busy.value = true;
   error.value = "";
   try {
@@ -623,12 +633,33 @@ async function saveTemplate(options: { returnToPreview?: boolean; allowContextCh
     const id = draftTemplateId.value ?? (selectedTemplateId.value === "automatic"
       ? crypto.randomUUID() : selectedTemplateId.value);
     if (!id) throw new Error("请先选择模板");
-    const updated = await templateRepository.upsert(
-      { baseId: active.baseId, tableId: active.tableId },
-      getPersistentTemplateData(designerRef.value),
-      { id, name: currentTemplateName.value, expectedRevision: templateCollection.value.revision },
-    );
-    if (!options.allowContextChange) await assertCurrentContext(active, revision);
+    const persistentTemplate = getPersistentTemplateData(designerRef.value);
+    const persist = async () => {
+      const updated = await templateRepository.upsert(
+        { baseId: active.baseId, tableId: active.tableId },
+        persistentTemplate,
+        { id, name: currentTemplateName.value, expectedRevision: templateCollection.value.revision },
+      );
+      if (!options.allowContextChange) await assertCurrentContext(active, revision);
+      return updated;
+    };
+    let renderedBatch: RenderedPrintJob | null = null;
+    let renderFailure: Error | null = null;
+    let updated: TemplateCollection;
+    if (batchEditing) {
+      if (!printJob.value || !renderedPages.value) throw new Error("当前批量预览尚未准备好，不能保存模板");
+      const result = await commitBatchTemplateEdit({
+        previousRendered: renderedPages.value,
+        persist,
+        render: () => renderPrintJobPages(designerRef.value!, printJob.value!, undefined,
+          () => revision === contextRevision),
+      });
+      updated = result.saved;
+      renderedBatch = result.rendered;
+      if (!result.ok) renderFailure = result.error;
+    } else {
+      updated = await persist();
+    }
     const saved = updated.templates.find((item) => item.id === id)!;
     templateCollection.value = updated;
     selectedTemplateId.value = id;
@@ -640,7 +671,20 @@ async function saveTemplate(options: { returnToPreview?: boolean; allowContextCh
     templateDirty.value = false;
     captureTemplateBaseline();
     status.value = "模板已保存（未写入当前记录值）";
-    if (options.returnToPreview) {
+    if (batchEditing && renderFailure) {
+      batchPreviewStale.value = true;
+      error.value = `模板已保存，但批量预览刷新失败：${renderFailure.message}`;
+      status.value = "模板已保存，原批量预览仍保留；请重试刷新";
+      return false;
+    }
+    if (renderedBatch) {
+      renderedPages.value = renderedBatch;
+      previewHtml.value = composeRenderedPrintPages(renderedBatch);
+      previewError.value = "";
+      batchPreviewStale.value = false;
+      workspaceMode.value = "preview";
+      status.value = `模板已保存，已按 ${batchSession.value.committedRecordIds.length} 条记录刷新批量预览`;
+    } else if (options.returnToPreview) {
       workspaceMode.value = "preview";
     }
     return true;
@@ -799,8 +843,8 @@ async function confirmTemplateManagement() {
 }
 
 function enterEditMode() {
-  if (isBatchMode.value) {
-    status.value = "批量预览期间不能编辑模板，请先退出批量";
+  if (isBatchMode.value && !renderedPages.value) {
+    status.value = "请先等待批量预览生成完成";
     return;
   }
   if (!canEnterTemplateEdit({
@@ -812,8 +856,10 @@ function enterEditMode() {
   }
   closeTransientMenus();
   workspaceMode.value = "edit";
-  renderedPages.value = null;
-  previewHtml.value = "";
+  if (!isBatchMode.value) {
+    renderedPages.value = null;
+    previewHtml.value = "";
+  }
   activeEditorPanel.value = "data-sources";
   status.value = "已进入编辑模式";
 }
@@ -826,6 +872,80 @@ async function applyPreviewMode(): Promise<boolean> {
   return refreshed;
 }
 
+async function restoreBatchEditBaseline(): Promise<boolean> {
+  if (!isBatchMode.value || !designerRef.value || !printJob.value) return false;
+  const active = selection.value;
+  const revision = contextRevision;
+  busy.value = true;
+  error.value = "";
+  let baselineRestored = false;
+  try {
+    const warning = await bindStoredTemplateOrFallback(
+      designerRef.value,
+      storedTemplate.value?.template,
+      printJob.value,
+    );
+    if (warning) throw new Error(warning);
+    templateDirty.value = false;
+    captureTemplateBaseline();
+    baselineRestored = true;
+    if (batchPreviewStale.value) {
+      const rendered = await renderPrintJobPages(
+        designerRef.value,
+        printJob.value,
+        undefined,
+        () => revision === contextRevision,
+      );
+      if (active) await assertCurrentContext(active, revision);
+      renderedPages.value = rendered;
+      previewHtml.value = composeRenderedPrintPages(rendered);
+      previewError.value = "";
+      batchPreviewStale.value = false;
+    }
+    workspaceMode.value = "preview";
+    status.value = "已放弃修改并返回原批量预览";
+    return true;
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : "无法恢复保存前的批量模板";
+    status.value = baselineRestored
+      ? "修改已放弃，原批量预览仍保留；请重试刷新"
+      : "模板草稿仍保留";
+    return false;
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function refreshStaleBatchPreview(): Promise<boolean> {
+  if (!isBatchMode.value || !designerRef.value || !printJob.value || !renderedPages.value) return false;
+  const active = selection.value;
+  const revision = contextRevision;
+  busy.value = true;
+  error.value = "";
+  try {
+    const rendered = await renderPrintJobPages(
+      designerRef.value,
+      printJob.value,
+      undefined,
+      () => revision === contextRevision,
+    );
+    if (active) await assertCurrentContext(active, revision);
+    renderedPages.value = rendered;
+    previewHtml.value = composeRenderedPrintPages(rendered);
+    previewError.value = "";
+    batchPreviewStale.value = false;
+    workspaceMode.value = "preview";
+    status.value = `已按 ${batchSession.value.committedRecordIds.length} 条记录刷新批量预览`;
+    return true;
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : "批量预览刷新失败";
+    status.value = "原批量预览仍保留；请继续编辑或重试";
+    return false;
+  } finally {
+    busy.value = false;
+  }
+}
+
 function requestPreviewMode() {
   closeTransientMenus();
   if (workspaceMode.value !== "edit") {
@@ -834,6 +954,15 @@ function requestPreviewMode() {
   }
   if (shouldGuardUnsavedNavigation(refreshTemplateDirtyState())) {
     decisionDialog.value = "leave";
+    return;
+  }
+  if (isBatchMode.value) {
+    if (batchPreviewStale.value) {
+      void refreshStaleBatchPreview();
+      return;
+    }
+    workspaceMode.value = "preview";
+    status.value = "已返回批量预览";
     return;
   }
   void applyPreviewMode();
@@ -887,10 +1016,12 @@ async function resolveDecision(decision: "save" | "discard" | "cancel") {
     if (decision === "save") {
       const saved = await saveTemplate({ allowContextChange: true });
       if (!saved) return;
-      if (request === "batch" && !await applyPreviewMode()) return;
+      if (request === "batch" && workspaceMode.value === "edit" && !await applyPreviewMode()) return;
     } else if (request === "batch" || request === "exit") {
-      const loaded = await loadTemplateAndPreview(printJob.value, selection.value, contextRevision,
-        draftOriginId.value ?? (selectedTemplateId.value === "automatic" ? null : selectedTemplateId.value));
+      const loaded = isBatchMode.value && workspaceMode.value === "edit"
+        ? await restoreBatchEditBaseline()
+        : await loadTemplateAndPreview(printJob.value, selection.value, contextRevision,
+          draftOriginId.value ?? (selectedTemplateId.value === "automatic" ? null : selectedTemplateId.value));
       if (!loaded) return;
       if (request === "batch" && !renderedPages.value) return;
       workspaceMode.value = modeAfterDiscardForLoadRequest(request, workspaceMode.value);
@@ -908,11 +1039,13 @@ async function resolveDecision(decision: "save" | "discard" | "cancel") {
     const saved = await saveTemplate();
     if (!saved) return;
   } else {
-    const loaded = await loadTemplateAndPreview(printJob.value, selection.value, contextRevision,
-      draftOriginId.value ?? (selectedTemplateId.value === "automatic" ? null : selectedTemplateId.value));
+    const loaded = isBatchMode.value && workspaceMode.value === "edit"
+      ? await restoreBatchEditBaseline()
+      : await loadTemplateAndPreview(printJob.value, selection.value, contextRevision,
+        draftOriginId.value ?? (selectedTemplateId.value === "automatic" ? null : selectedTemplateId.value));
     if (!loaded) return;
   }
-  if (action === "leave") await applyPreviewMode();
+  if (action === "leave" && workspaceMode.value === "edit") await applyPreviewMode();
   else if (action === "reload" && decision === "save") {
     await loadTemplateAndPreview(printJob.value, selection.value, contextRevision, selectedTemplateId.value);
   }
@@ -1100,6 +1233,14 @@ onBeforeUnmount(() => {
         <span>{{ currentRecordLabel }}</span>
       </div>
       <div class="header-actions">
+        <template v-if="workspaceSurface === 'batch-edit'">
+          <button class="button button-tertiary" :disabled="busy" @click="requestPreviewMode">
+            <span aria-hidden="true">←</span> 返回批量预览
+          </button>
+          <button v-if="presentation.showSave" class="button button-primary"
+            :disabled="busy || !templateSaveAllowed" @click="saveTemplate()">保存模板</button>
+        </template>
+        <template v-else>
         <button v-if="presentation.showRecordPicker" class="button button-secondary button-record-picker"
           :disabled="busy || !templateLoaded" @click="requestLoadRecords(true)">
           {{ batchWorkspaceActions.selectLabel }}
@@ -1113,6 +1254,7 @@ onBeforeUnmount(() => {
         <button v-if="presentation.showOutputs" class="button button-primary" :disabled="batchWorkspaceActions.outputDisabled" @click="printOutput">
           {{ batchWorkspaceActions.printLabel }}
         </button>
+        </template>
       </div>
     </header>
 
@@ -1150,11 +1292,12 @@ onBeforeUnmount(() => {
     </div>
 
     <section class="workspace" :class="`workspace-${workspaceMode}`">
-      <aside class="sidebar" :aria-label="presentation.showBatchSummary ? '批量预览' : presentation.showTemplateDirectory ? '模板目录' : '编辑操作区'">
+      <aside class="sidebar" :aria-label="presentation.showBatchSummary ? '批量打印目录' : presentation.showTemplateDirectory ? '模板目录' : '编辑操作区'">
         <section v-if="presentation.showBatchSummary" class="sidebar-section batch-preview-sidebar">
           <div class="sidebar-title-row">
             <span class="sidebar-title">本次打印</span>
-            <span class="readonly-tag">只读</span>
+            <span v-if="workspaceSurface === 'batch-preview'" class="readonly-tag">预览</span>
+            <span v-else class="readonly-tag readonly-tag-editing">编辑中</span>
           </div>
           <div class="batch-count"><strong>{{ batchSession.committedRecordIds.length }}</strong><span>条记录</span></div>
           <dl class="batch-metadata">
@@ -1276,21 +1419,58 @@ onBeforeUnmount(() => {
       <section class="workspace-main">
         <header v-if="presentation.showWorkspaceToolbar" class="workspace-toolbar">
           <div class="workspace-heading">
-            <h2>{{ workspaceSurface === 'batch-preview' ? '批量打印预览' : currentTemplateName }}</h2>
+            <h2>{{ workspaceSurface === 'batch-preview' ? '批量打印预览'
+              : workspaceSurface === 'batch-edit' ? `编辑${currentTemplateName}` : currentTemplateName }}</h2>
             <span>{{ workspaceSurface === 'batch-preview'
               ? `${batchSession.committedRecordIds.length} 条记录 · ${renderedPages?.pages.length ?? 0} 页`
-              : `${templateLayoutLabel(storedTemplate?.template)} · A4 纵向` }}</span>
+              : workspaceSurface === 'batch-edit'
+                ? `保存后重新生成 ${batchSession.committedRecordIds.length} 条记录`
+                : `${templateLayoutLabel(storedTemplate?.template)} · A4 纵向` }}</span>
           </div>
           <div class="workspace-actions">
             <button v-if="presentation.showEditTemplate" class="button button-secondary"
-              :disabled="busy || !templateSelected || !templateSaveAllowed" @click="enterEditMode">编辑模板</button>
+              :disabled="busy || !templateSelected || !templateSaveAllowed || (isBatchMode && !renderedPages)"
+              @click="enterEditMode">编辑模板</button>
           </div>
         </header>
 
         <div class="canvas-stage">
-          <div class="designer-host" :class="{ 'designer-host-preview': workspaceSurface !== 'single-edit' }"
-            :aria-hidden="workspaceSurface === 'batch-preview' ? 'true' : 'false'"
-            :inert="workspaceSurface === 'batch-preview' ? true : undefined">
+          <section v-if="presentation.showInlineEditorPanel" class="batch-inline-editor-panel" aria-label="批量模板编辑操作区">
+            <nav class="editor-tabs" aria-label="编辑工具">
+              <button v-for="panel in EDITOR_PANELS" :key="panel" class="editor-tab"
+                :class="{ 'editor-tab-active': activeEditorPanel === panel }"
+                :aria-selected="activeEditorPanel === panel" @click="selectEditorPanel(panel)">
+                {{ editorPanelLabels[panel] }}
+              </button>
+            </nav>
+            <div v-if="activeEditorPanel === 'data-sources'" class="sidebar-section editor-content">
+              <strong class="editor-group-title">字段</strong>
+              <button v-for="field in fieldDataSources" :key="field.id" class="data-source-row" type="button"
+                :aria-label="`复制数据源 ${field.name}`"
+                @click="copyDataSource({ id: fieldDataSourceId(field.id), label: field.name })">
+                <span class="source-main"><span class="source-symbol" aria-hidden="true">字</span><span>{{ field.name }}</span></span>
+                <small>复制</small>
+              </button>
+              <span v-if="!fieldDataSources.length" class="empty-copy">当前表没有可用字段</span>
+              <strong class="editor-group-title editor-group-system">系统</strong>
+              <button class="data-source-row" type="button" aria-label="复制数据源 打印日期"
+                @click="copyDataSource({ id: SYSTEM_PRINT_DATE_ID, label: '打印日期' })">
+                <span class="source-main"><span class="source-symbol" aria-hidden="true">系</span><span>打印日期</span></span>
+                <small>复制</small>
+              </button>
+            </div>
+            <div v-if="activeEditorPanel === 'components'" class="sidebar-section editor-content">
+              <p class="component-hint">拖动组件到右侧画布</p>
+              <button v-for="component in components" :key="component.type" class="data-source-row component-row"
+                draggable="true" @dragstart="startComponentDrag(component.type, $event)">
+                <span class="source-main"><span class="source-symbol component-symbol" aria-hidden="true">{{ component.label.slice(0, 1) }}</span><span>{{ component.label }}</span></span>
+                <small>拖入画布</small>
+              </button>
+            </div>
+          </section>
+          <div class="designer-host" :class="{ 'designer-host-preview': !presentation.showDesigner }"
+            :aria-hidden="!presentation.showDesigner ? 'true' : 'false'"
+            :inert="!presentation.showDesigner ? true : undefined">
             <print-designer ref="designerRef" lang="zh" @ready="markDesignerReady" />
           </div>
           <section v-if="presentation.showPreview" class="preview-surface" aria-label="打印预览">
@@ -1537,6 +1717,7 @@ onBeforeUnmount(() => {
 .action-menu-danger { margin-top: 4px; border-top: 1px solid var(--ui-divider); border-radius: 0 0 5px 5px; color: var(--ui-danger); }
 .edit-more-anchor { position: relative; }
 .batch-preview-sidebar { flex: 1; overflow: auto; padding: 10px 12px; }
+.readonly-tag-editing { background: #fff7e8; color: #9a5f08; }
 .batch-count { display: flex; align-items: baseline; gap: 5px; margin: 4px 0 12px; }
 .batch-count strong { font-size: 24px; line-height: 28px; font-weight: 600; }
 .batch-count span { color: var(--ui-text-secondary); font-size: 11px; }
@@ -1576,6 +1757,12 @@ onBeforeUnmount(() => {
 .workspace-heading h2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 600; }
 .workspace-heading span { color: var(--ui-text-tertiary); font-size: 10px; line-height: 14px; }
 .canvas-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--ui-workspace); }
+.surface-batch-edit .workspace { --workspace-sidebar-width: 188px; }
+.surface-batch-edit .canvas-stage { display: flex; }
+.batch-inline-editor-panel { flex: 0 0 176px; min-width: 0; display: flex; flex-direction: column; border-right: 1px solid var(--ui-divider); background: #fff; }
+.batch-inline-editor-panel .editor-tabs { flex: 0 0 44px; }
+.batch-inline-editor-panel .editor-content { min-height: 0; }
+.surface-batch-edit .designer-host { position: relative; inset: auto; flex: 1; min-width: 0; }
 .designer-host { position: absolute; z-index: 1; inset: 0; overflow: hidden; background: #fff; opacity: 1; }
 .designer-host-preview { opacity: 0; pointer-events: none; }
 .designer-host print-designer { display: block; min-height: 100%; }
@@ -1597,6 +1784,8 @@ onBeforeUnmount(() => {
 @media (max-width: 760px) {
   .workspace { --workspace-sidebar-width: 164px; }
   .workspace-edit { --workspace-sidebar-width: 188px; }
+  .surface-batch-edit .workspace { --workspace-sidebar-width: 164px; }
+  .batch-inline-editor-panel { flex-basis: 148px; }
   .app-header { gap: 8px; padding: 0 9px; }
   .header-context { display: none; }
   .header-actions { gap: 4px; }

@@ -1,6 +1,6 @@
 export type WorkspaceMode = "preview" | "edit";
 
-export type WorkspaceSurface = "single-preview" | "single-edit" | "batch-preview";
+export type WorkspaceSurface = "single-preview" | "single-edit" | "batch-preview" | "batch-edit";
 
 export type TemplateSelection = "none" | "selected";
 
@@ -26,7 +26,7 @@ export function initialWorkspaceMode(): WorkspaceMode {
 }
 
 export function getWorkspaceSurface(mode: WorkspaceMode, batchMode: boolean): WorkspaceSurface {
-  if (batchMode) return "batch-preview";
+  if (batchMode) return mode === "edit" ? "batch-edit" : "batch-preview";
   return mode === "edit" ? "single-edit" : "single-preview";
 }
 

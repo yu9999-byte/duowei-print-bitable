@@ -22,11 +22,11 @@ test("SPEC-UX-01: a loaded workspace starts in print preview and enters edit exp
   assert.equal(toggleWorkspaceMode("edit"), "preview");
 });
 
-test("SPEC-BATCH-08: a committed batch always exposes the batch preview surface", () => {
+test("SPEC-BATCH-08: a committed batch preserves preview and edit as distinct surfaces", () => {
   assert.equal(getWorkspaceSurface("preview", false), "single-preview");
   assert.equal(getWorkspaceSurface("edit", false), "single-edit");
   assert.equal(getWorkspaceSurface("preview", true), "batch-preview");
-  assert.equal(getWorkspaceSurface("edit", true), "batch-preview");
+  assert.equal(getWorkspaceSurface("edit", true), "batch-edit");
 });
 
 test("SPEC-UX-02: template status distinguishes automatic, saved, fallback, and unsaved states", () => {

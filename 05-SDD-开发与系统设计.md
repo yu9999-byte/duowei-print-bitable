@@ -28,7 +28,7 @@
 | ContinuousLayout | 固定高度连续模板、PrintJob | 原生单列长纸临时模板与数组变量 | 只接受可证明高度的单页普通字段模板；不拼接 DOM，不持久化业务值 |
 | TemplateRepository | base/table、版本化模板集合 | 多模板、唯一默认项或只读回退结果 | bridge 未设置键实测返回 `{}`，空普通对象按无值处理；v1 只读迁移；非空不可读模板不覆盖，回退会话禁用保存；保存前递归移除运行记录、记录 ID、设计器变量、表格样本和凭证形态字段，读取含禁存数据的旧信封时零写入拒绝；权限与冲突显式 |
 | DesignerAdapter | 模板、变量、任务 | canonical rendered pages、编辑、打印、已校验 PDF Blob | 直接调用安装版 Web Component；主预览与打印复用同一页对象；PDF 先校验文件头、页数和大小再提交下载，不造替代引擎 |
-| WorkspaceShell | PrintJob、模板集合、DesignerAdapter | `WorkspaceMode` 与 `WorkspaceSurface`、所选模板、统一编辑入口 | `getWorkspaceSurface(mode, batchMode)` 将工作台表面归一为 `single-preview`、`single-edit` 或 `batch-preview`；默认预览并选默认模板；编辑时目录隐藏，左侧组件可拖入、数据源只可复制，右侧仍为真实 Web Component；批量预览只读且不暴露模板编辑操作 |
+| WorkspaceShell | PrintJob、模板集合、DesignerAdapter | `WorkspaceMode` 与 `WorkspaceSurface`、所选模板、统一编辑入口 | `getWorkspaceSurface(mode, batchMode)` 将工作台表面归一为 `single-preview`、`single-edit`、`batch-preview` 或 `batch-edit`；单条编辑隐藏模板目录，批量预览/编辑共享左侧批次目录并仅切换右侧模板区域；组件可拖入、数据源只可复制，右侧仍为真实 Web Component |
 
 组件拖拽继续采用锁定版 `vue-print-designer@1.7.39` 的 `application/json` `{type}` 契约，让引擎创建默认组件。数据源不再写入拖拽载荷；复制动作携带稳定字段/系统 ID 与当前标签，粘贴适配层把稳定绑定插入当前文本组件，同时只向用户显示 `@字段名`。关联数组仍由表格组件的专用配置处理。该适配随引擎版本升级复核；不得恢复“拖数据源创建元素”的旧路径。
 
@@ -44,7 +44,7 @@
 
 工作台状态由纯模型 `WorkspaceMode`、`TemplateStatus`、`TemplateSelection` 和 `EditorPanel` 表达，UI 只编排状态，不把状态判断散落在模板中：
 
-工作台内部模式与用户可见表面分开表达。`WorkspaceMode` 仍描述单条预览/编辑流程；`WorkspaceSurface` 是渲染边界，只有 `single-preview` 才显示模板目录和模板选择，只有 `single-edit` 才显示数据源/组件操作区，`batch-preview` 无论内部模式为何都只显示只读批次摘要。批量状态成功提交时必须同时得到 `batch-ready` 与 `batch-preview`，不能仅切换 `batchMode` 而保留单条编辑表面。
+工作台内部模式与用户可见表面分开表达。`WorkspaceMode` 描述右侧模板区域的预览/编辑状态；`WorkspaceSurface` 由模式与批次会话共同得到四种表面。`single-preview` 显示模板目录，`single-edit` 显示全局数据源/组件操作区；`batch-preview` 和 `batch-edit` 均显示同一左侧批次目录，后者只在右侧嵌入数据源/组件操作面与真实设计器。批量候选成功仍原子提交为 `batch-ready + preview`，用户随后显式进入 `batch-edit`。
 
 ```text
 loading → preview
@@ -75,7 +75,9 @@ batch-ready
   └─ 导出 N 条 PDF → 同序一个 PDF Blob → 校验 → 一次浏览器下载
 ```
 
-`batch-ready` 是工作台的预览态不变量：候选提交成功后必须隐藏编辑操作区和可编辑设计器画布，批次预览成为唯一主内容；用户只能先退出批量，再进入模板编辑。若选择动作从 `edit-dirty` 发起，先复用 `SPEC-UX-05` 的保存/放弃决策，决策完成前不启动批次读取。候选失败仍恢复原模式和原 committed session，不为了强制预览而清空工作区。
+`batch-ready` 是已提交记录集合的不变量，而不是只读 UI 不变量：候选提交成功后先显示批次预览，但可在不改变 committed session 的前提下进入 `batch-edit`。保存模板后以当前 `PrintJob` 完整生成候选 canonical pages，成功才替换预览；失败保留草稿和旧页面。若选择动作从 `edit-dirty` 发起，仍先复用 `SPEC-UX-05` 的保存/放弃决策，决策完成前不启动批次读取。候选失败恢复原模式和原 committed session。
+
+锁定版 `vue-print-designer@1.7.39` 的文本 textarea 把无 Shift 的 Enter 当作提交。Goal v9 的版本固定适配在 Shadow DOM 捕获阶段仅接管无修饰键 Enter：按当前选区插入 `\n`、更新选择位置并派发合成 `input`，阻止引擎同一次 keydown 提交；失焦仍走引擎 `commitInlineEdit` 和既有数据源同步。该适配必须以源码契约和事件测试锁定，升级引擎时优先删除适配并使用公开多行编辑能力。
 
 读取超时由 `read-timeout.ts` 提供单一错误类型与默认 15 秒阈值，`ContextAdapter` 和 `BitableGateway` 共用。超时只结束当前读取候选，不能提交部分任务；迟到 Promise 不得回写当前会话。官方选择器的 Promise 代表用户尚未完成交互，不能套用数据读取阈值，否则会把正常的慢速勾选误判为失败。
 
@@ -148,11 +150,12 @@ ADR 只记录有争议或影响架构/授权的决策，状态为 proposed/accep
 
 Goal v7 只重构 `WorkspaceShell` 的界面结构、样式和展示状态，不复制业务用例。加载、选数、保存、打印、PDF、模板管理仍调用现有回调；`src/core/**`、`src/host/**`、模板协议和 `src/engine/**` 的渲染/字段/输出算法保持锁定。设计器适配层只允许使用 `vue-print-designer@1.7.39` 的公开主题接口及注入 UI Chrome 收纳规则，以关闭默认浮层、隐藏重复输出入口；不得改变模板或输出语义。
 
-工作台以 `single-preview / single-edit / batch-preview` 为显式展示面：
+工作台以 `single-preview / single-edit / batch-preview / batch-edit` 为显式展示面：
 
 1. `single-preview` 拥有模板目录、单一新建入口、当前模板编辑和单条输出；模板行管理动作通过同一菜单分发到既有仓库回调。
 2. `single-edit` 隐藏模板目录及打印/PDF，左侧在数据源与组件间切换，右侧挂载唯一真实设计器；返回和保存继续经过同一草稿守卫与持久化用例。
-3. `batch-preview` 只读，拥有批次摘要、重选/退出和批量输出，不挂载编辑操作面。
+3. `batch-preview` 拥有批次目录、当前模板编辑入口、重选/退出和批量输出；默认、标签、连续三种布局均从当前模板推导。
+4. `batch-edit` 保留同一左侧批次目录，右侧嵌入唯一数据源/组件操作面与真实设计器；只显示返回批量预览和唯一保存，不显示尚未重渲染的新模板输出动作。保存成功后以原记录顺序原子重建批次。
 
 模板目录的重命名与删除属于 `WorkspaceShell` 展示交互，不新增核心状态或仓储用例：模板行菜单只负责打开产品内模态层，确认后仍调用既有 `TemplateRepository.rename/remove`。名称规范化位于 `src/components/template-management.ts`，仅去除首尾空格并拒绝空值；不修改 `src/core/**`。重命名弹层初始焦点进入并全选名称输入，删除弹层初始焦点停在取消；Tab 在弹层内循环，Esc、遮罩或取消关闭后将焦点归还原模板的更多按钮。仓储失败保留弹层与输入，避免用户丢失上下文。
 

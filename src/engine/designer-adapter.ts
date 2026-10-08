@@ -292,18 +292,41 @@ export function installDataSourceEditingLifecycle(
   const handleKeyDown = (event: Event) => {
     const textarea = eventTextarea(event);
     const keyboardEvent = event as KeyboardEvent;
-    if (textarea && keyboardEvent.key === "Enter" && !keyboardEvent.shiftKey) {
-      queueSynchronization();
-    }
+    if (!textarea
+      || keyboardEvent.key !== "Enter"
+      || keyboardEvent.shiftKey
+      || keyboardEvent.ctrlKey
+      || keyboardEvent.metaKey
+      || keyboardEvent.altKey) return;
+
+    // vue-print-designer@1.7.39 commits inline text on plain Enter. Intercept
+    // that version-locked shortcut before it reaches the textarea, then emit
+    // the same input event Vue's v-model expects. Blur remains the single
+    // commit/synchronization boundary.
+    keyboardEvent.preventDefault();
+    keyboardEvent.stopPropagation();
+    keyboardEvent.stopImmediatePropagation();
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? start;
+    textarea.setRangeText("\n", start, end, "end");
+    const inputEvent = typeof InputEvent === "function"
+      ? new InputEvent("input", {
+        bubbles: true,
+        composed: true,
+        inputType: "insertLineBreak",
+        data: null,
+      })
+      : new Event("input", { bubbles: true, composed: true });
+    textarea.dispatchEvent(inputEvent);
   };
 
   root.addEventListener("paste", handlePaste, { capture: true });
   root.addEventListener("focusout", handleFocusOut);
-  root.addEventListener("keydown", handleKeyDown);
+  root.addEventListener("keydown", handleKeyDown, { capture: true });
   return () => {
     root.removeEventListener("paste", handlePaste, { capture: true });
     root.removeEventListener("focusout", handleFocusOut);
-    root.removeEventListener("keydown", handleKeyDown);
+    root.removeEventListener("keydown", handleKeyDown, { capture: true });
     designerLifecycleOptions.delete(designer);
   };
 }

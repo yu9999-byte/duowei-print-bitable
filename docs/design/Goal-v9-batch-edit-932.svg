@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="932" height="540" viewBox="0 0 932 540">
+  <rect width="932" height="540" fill="#f2f3f5"/>
+  <rect width="932" height="52" fill="#fff"/><line x1="0" y1="52" x2="932" y2="52" stroke="#ebecef"/>
+  <rect x="16" y="14" width="24" height="24" rx="6" fill="#3370ff"/><text x="28" y="31" text-anchor="middle" font-family="Segoe UI, Microsoft YaHei" font-size="13" font-weight="600" fill="#fff">印</text>
+  <text x="48" y="31" font-family="Segoe UI, Microsoft YaHei" font-size="16" font-weight="600" fill="#1f2329">多维打印</text>
+  <text x="132" y="30" font-family="Segoe UI, Microsoft YaHei" font-size="12" fill="#8f959e">仓库订单表  /  已选 3 条</text>
+  <g font-family="Segoe UI, Microsoft YaHei" font-size="12"><text x="750" y="30" fill="#646a73">← 返回批量预览</text><rect x="836" y="10" width="80" height="32" rx="6" fill="#3370ff"/><text x="876" y="30" text-anchor="middle" fill="#fff">保存模板</text></g>
+  <rect x="0" y="52" width="188" height="488" fill="#fff"/><line x1="188" y1="52" x2="188" y2="540" stroke="#dee0e3"/>
+  <g font-family="Segoe UI, Microsoft YaHei">
+    <text x="16" y="80" font-size="14" font-weight="600" fill="#1f2329">本次打印</text><rect x="138" y="63" width="34" height="22" rx="5" fill="#e8f0ff"/><text x="155" y="78" text-anchor="middle" font-size="11" fill="#245bdb">批量</text>
+    <text x="16" y="118" font-size="28" font-weight="600" fill="#1f2329">3</text><text x="43" y="118" font-size="12" fill="#646a73">条记录</text>
+    <text x="16" y="151" font-size="12" fill="#8f959e">模板</text><text x="74" y="151" font-size="12" fill="#1f2329">默认模板</text>
+    <text x="16" y="177" font-size="12" fill="#8f959e">排版</text><text x="74" y="177" font-size="12" fill="#1f2329">默认排版</text>
+    <line x1="16" y1="194" x2="172" y2="194" stroke="#ebecef"/><text x="16" y="220" font-size="12" font-weight="600" fill="#646a73">已选记录</text>
+    <rect x="12" y="232" width="164" height="36" rx="6" fill="#f5f6f7"/><text x="24" y="255" font-size="13" fill="#1f2329">PO-0003</text>
+    <rect x="12" y="274" width="164" height="36" rx="6" fill="#f5f6f7"/><text x="24" y="297" font-size="13" fill="#1f2329">PO-0004</text>
+    <rect x="12" y="316" width="164" height="36" rx="6" fill="#f5f6f7"/><text x="24" y="339" font-size="13" fill="#1f2329">PO-0005</text>
+  </g>
+  <rect x="188" y="52" width="744" height="52" fill="#fff"/><line x1="188" y1="104" x2="932" y2="104" stroke="#ebecef"/>
+  <text x="208" y="76" font-family="Segoe UI, Microsoft YaHei" font-size="15" font-weight="600" fill="#1f2329">编辑默认模板</text><text x="208" y="94" font-family="Segoe UI, Microsoft YaHei" font-size="11" fill="#8f959e">保存后将重新生成当前 3 条记录</text>
+  <rect x="188" y="104" width="176" height="436" fill="#fff"/><line x1="364" y1="104" x2="364" y2="540" stroke="#dee0e3"/>
+  <rect x="200" y="116" width="76" height="30" rx="5" fill="#e8f0ff"/><text x="238" y="136" text-anchor="middle" font-family="Segoe UI, Microsoft YaHei" font-size="12" fill="#245bdb">数据源</text><text x="315" y="136" text-anchor="middle" font-family="Segoe UI, Microsoft YaHei" font-size="12" fill="#646a73">组件</text>
+  <g font-family="Segoe UI, Microsoft YaHei"><text x="204" y="174" font-size="12" font-weight="600" fill="#646a73">字段</text>
+    <rect x="200" y="186" width="152" height="38" rx="6" fill="#f5f6f7"/><text x="212" y="210" font-size="12" fill="#1f2329">订单编号</text><text x="338" y="210" text-anchor="end" font-size="11" fill="#8f959e">复制</text>
+    <rect x="200" y="230" width="152" height="38" rx="6" fill="#f5f6f7"/><text x="212" y="254" font-size="12" fill="#1f2329">客户名称</text><text x="338" y="254" text-anchor="end" font-size="11" fill="#8f959e">复制</text>
+    <rect x="200" y="274" width="152" height="38" rx="6" fill="#f5f6f7"/><text x="212" y="298" font-size="12" fill="#1f2329">单价</text><text x="338" y="298" text-anchor="end" font-size="11" fill="#8f959e">复制</text>
+    <text x="204" y="338" font-size="12" font-weight="600" fill="#646a73">系统</text><rect x="200" y="350" width="152" height="38" rx="6" fill="#f5f6f7"/><text x="212" y="374" font-size="12" fill="#1f2329">打印日期</text><text x="338" y="374" text-anchor="end" font-size="11" fill="#8f959e">复制</text></g>
+  <rect x="364" y="104" width="568" height="436" fill="#f2f3f5"/><rect x="384" y="116" width="528" height="36" fill="#fff" stroke="#dee0e3"/><text x="398" y="139" font-family="Segoe UI, Microsoft YaHei" font-size="11" fill="#646a73">撤销　重做　对齐　页面设置　　　　　　　　　　　　100%</text>
+  <rect x="480" y="174" width="338" height="438" fill="#fff" stroke="#dee0e3"/><rect x="506" y="214" width="286" height="106" fill="none" stroke="#3370ff" stroke-dasharray="4 3"/>
+  <text x="520" y="246" font-family="Segoe UI, Microsoft YaHei" font-size="14" fill="#1f2329">订单编号：@订单编号</text><text x="520" y="276" font-family="Segoe UI, Microsoft YaHei" font-size="14" fill="#1f2329">客户名称：@客户名称</text><text x="520" y="306" font-family="Segoe UI, Microsoft YaHei" font-size="14" fill="#1f2329">单价：@单价</text>
+</svg>

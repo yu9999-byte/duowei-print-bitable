@@ -11,6 +11,7 @@ test("CT-UX-09: single preview owns templates, edit entry, record selection, and
     showBrand: true,
     showTemplateDirectory: true,
     showEditorPanel: false,
+    showInlineEditorPanel: false,
     showBatchSummary: false,
     showWorkspaceToolbar: true,
     showRecordPicker: true,
@@ -29,6 +30,7 @@ test("CT-UX-09: single edit hides template and output actions", () => {
     showBrand: false,
     showTemplateDirectory: false,
     showEditorPanel: true,
+    showInlineEditorPanel: false,
     showBatchSummary: false,
     showWorkspaceToolbar: false,
     showRecordPicker: false,
@@ -42,17 +44,18 @@ test("CT-UX-09: single edit hides template and output actions", () => {
   });
 });
 
-test("CT-UX-09: batch preview is read-only and owns batch recovery/output actions", () => {
+test("CT-UX-09: batch preview keeps its directory and exposes the current template edit entry", () => {
   assert.deepEqual(getWorkspacePresentation("batch-preview"), {
     showBrand: true,
     showTemplateDirectory: false,
     showEditorPanel: false,
+    showInlineEditorPanel: false,
     showBatchSummary: true,
     showWorkspaceToolbar: true,
     showRecordPicker: true,
     showExitBatch: true,
     showOutputs: true,
-    showEditTemplate: false,
+    showEditTemplate: true,
     showSave: false,
     showBack: false,
     showDesigner: false,
@@ -60,12 +63,48 @@ test("CT-UX-09: batch preview is read-only and owns batch recovery/output action
   });
 });
 
+test("CT-UX-09: batch edit keeps the batch directory and changes only the right workspace", () => {
+  assert.deepEqual(getWorkspacePresentation("batch-edit"), {
+    showBrand: true,
+    showTemplateDirectory: false,
+    showEditorPanel: false,
+    showInlineEditorPanel: true,
+    showBatchSummary: true,
+    showWorkspaceToolbar: true,
+    showRecordPicker: false,
+    showExitBatch: false,
+    showOutputs: false,
+    showEditTemplate: false,
+    showSave: true,
+    showBack: true,
+    showDesigner: true,
+    showPreview: false,
+  });
+});
+
 test("CT-UX-10: canvas-first sidebar stays compact without shrinking the editor panel", () => {
   assert.deepEqual(getWorkspaceSidebarLayout("single-preview", 932), { width: 188, compact: false });
   assert.deepEqual(getWorkspaceSidebarLayout("batch-preview", 932), { width: 188, compact: false });
+  assert.deepEqual(getWorkspaceSidebarLayout("batch-edit", 932), { width: 188, compact: false });
   assert.deepEqual(getWorkspaceSidebarLayout("single-edit", 932), { width: 208, compact: false });
   assert.deepEqual(getWorkspaceSidebarLayout("single-preview", 700), { width: 164, compact: true });
+  assert.deepEqual(getWorkspaceSidebarLayout("batch-preview", 700), { width: 164, compact: true });
+  assert.deepEqual(getWorkspaceSidebarLayout("batch-edit", 700), { width: 164, compact: true });
   assert.deepEqual(getWorkspaceSidebarLayout("single-edit", 700), { width: 188, compact: true });
+});
+
+test("CT-UX-09: App exposes one edit action and one save action per active surface", () => {
+  const source = readFileSync("src/App.vue", "utf8");
+  const editActions = source.match(/>编辑模板<\/button>/g) ?? [];
+  const saveActions = source.match(/@click="saveTemplate\(\)">保存模板<\/button>/g) ?? [];
+  const batchBackActions = source.match(/> 返回批量预览\s*<\/button>/g) ?? [];
+
+  assert.equal(editActions.length, 1);
+  assert.equal(saveActions.length, 2, "single-edit and batch-edit use mutually exclusive headers");
+  assert.equal(batchBackActions.length, 1);
+  assert.match(source, /<template v-if="workspaceSurface === 'batch-edit'">[\s\S]*?保存模板<\/button>[\s\S]*?<template v-else>/);
+  assert.match(source, /<header v-else class="app-header app-header-edit">[\s\S]*?保存模板<\/button>[\s\S]*?<\/header>/);
+  assert.doesNotMatch(source, /class="workspace-actions"[\s\S]*?保存模板<\/button>[\s\S]*?<\/div>/);
 });
 
 test("CT-UX-08/09: App shell removes the old duplicated and native-looking controls", () => {
