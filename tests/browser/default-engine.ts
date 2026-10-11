@@ -1,7 +1,8 @@
 import "vue-print-designer";
 import "vue-print-designer/style.css";
 import { generateTemplate } from "../../src/core/template-generator.ts";
-import { bindPrintJob, composeRenderedPrintPages, renderPrintJobPages,
+import { bindPrintJob, composeBrowserPrintDocument, composeRenderedPrintPages, getPrintJobPdfBlob,
+  renderPrintJobPages,
   type DesignerElement } from "../../src/engine/designer-adapter.ts";
 import type { PrintJob } from "../../src/core/print-job.ts";
 
@@ -30,7 +31,9 @@ function createJob(count: number): PrintJob {
 async function runCase(count: number) {
   const job = createJob(count);
   await bindPrintJob(designer, generateTemplate(job), job);
+  const renderStartedAt = performance.now();
   const rendered = await renderPrintJobPages(designer, job);
+  const renderMs = Math.round((performance.now() - renderStartedAt) * 10) / 10;
   const pages = composeRenderedPrintPages(rendered);
   const parsedDocument = new DOMParser().parseFromString(pages, "text/html");
   const printed = Array.from(parsedDocument.querySelectorAll('[data-duowei-print-page="true"]'));
@@ -46,23 +49,19 @@ async function runCase(count: number) {
     throw new Error(`Unexpected rendered pages for ${count}: ${rendered.pageCounts.join(",")}/${printed.length}`);
   }
 
-  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
-    *{box-sizing:border-box}html,body{margin:0;padding:0}body{min-width:320px}
-    @page{size:${rendered.canvasWidth}px ${rendered.canvasHeight}px;margin:0}
-    #duowei-print-root{display:none}
-    @media print{
-      body > *{display:none!important}body > #duowei-print-root{display:block!important}
-      #duowei-print-root,#duowei-print-root *{visibility:visible}
-      [data-duowei-print-page="true"]{break-after:page;margin:0!important}
-      [data-duowei-print-page="true"] > :first-child{margin:0!important}
-      [data-duowei-print-page-last="true"]{break-after:auto}
-    }
-  </style></head><body><div id="duowei-print-root">${pages}</div></body></html>`;
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"></head>`
+    + `<body><div id="duowei-print-root">${composeBrowserPrintDocument(rendered)}</div></body></html>`;
   const response = await fetch(`/__test/html?count=${count}`, { method: "POST",
     headers: { "content-type": "text/html; charset=utf-8" }, body: html });
   if (!response.ok) throw new Error(`Local print HTML save failed: ${response.status}`);
+  const pdfStartedAt = performance.now();
+  const blob = await getPrintJobPdfBlob(designer, job, `default-${count}.pdf`);
+  const pdfMs = Math.round((performance.now() - pdfStartedAt) * 10) / 10;
+  const pdfResponse = await fetch(`/__test/pdf?count=${count}`, { method: "POST", body: blob });
+  if (!pdfResponse.ok) throw new Error(`Local PDF save failed: ${pdfResponse.status}`);
   return { count, pageCounts: rendered.pageCounts, pageCount: printed.length,
-    width: rendered.canvasWidth, height: rendered.canvasHeight, valuesOnce };
+    width: rendered.canvasWidth, height: rendered.canvasHeight, valuesOnce,
+    renderMs, pdfMs, pdfSize: blob.size };
 }
 
 async function run() {
@@ -71,7 +70,7 @@ async function run() {
     await new Promise<void>((resolve) => designer.addEventListener("ready", () => resolve(), { once: true }));
   }
   const cases = [];
-  for (const count of [3, 50]) cases.push(await runCase(count));
+  for (const count of [1, 3, 10, 50]) cases.push(await runCase(count));
   return { cases };
 }
 

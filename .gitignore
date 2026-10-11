@@ -29,6 +29,10 @@ artifacts/chrome-profile-*/
 artifacts/default-headless-*/
 artifacts/default-print-profile/
 
+# Reproducible browser fixture bundles and local inspection reports
+artifacts/linked-engine/
+outputs/**/*.inspect.ndjson
+
 # Editor and operating system files
 .idea/
 .vscode/

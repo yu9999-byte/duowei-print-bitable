@@ -1,0 +1,19 @@
+{
+  "base_token": "GmpDbJRMiaBQSgsTnnncwdn1nCd",
+  "table_id": "tbllgFkpFtzSzDs4",
+  "primary_field_id": "fldRo0gGIN",
+  "target_table_name": "批量容量验收",
+  "record_count": 51,
+  "unique_record_count": 51,
+  "boundary_ids": {
+    "first": "CAP-001",
+    "middle": "CAP-025",
+    "limit": "CAP-050",
+    "overflow": "CAP-051"
+  },
+  "immutable_tables": [
+    "tblKsW0leslbWB8J",
+    "tblzBPYAmTBy6N7c",
+    "tblO5vUmhA1ONOBI"
+  ]
+}

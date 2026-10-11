@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  bindBatchEditProjection,
   bindPrintJob,
   bindStoredTemplateOrFallback,
+  composeBrowserPrintDocument,
   composeRenderedPrintPages,
   exportPrintJob,
   getPrintPreviewHtml,
@@ -17,12 +19,14 @@ import {
   getContinuousPrintJobPdfBlob,
   renderPrintJobCandidate,
   restorePrintJobVariables,
+  renderedOutputPageCount,
   renderedPreviewHeight,
   isRenderedPrintJobCurrent,
   printRenderedPages,
   printPrintJob,
   rememberCopiedDataSource,
   synchronizeDesignerDataSources,
+  synchronizeBatchEditProjection,
   installDesignerPrintInterception,
   installDesignerSaveInterception,
   installDesignerWorkspaceChrome,
@@ -84,9 +88,36 @@ test("SPEC-TPL-01: binding feeds real values to editor preview and print variabl
     [SYSTEM_PRINT_DATE_ID]: "2026-09-21",
     打印日期: "2026-09-21",
     "__duowei_render_auto-field-1": "客户：甲",
-    "__duowei_render_auto-printed-at": "打印日期：2026-09-21",
   };
   assert.deepEqual(payloads, [expected, expected]);
+});
+
+test("CT-TPL-05: designer reactive template proxies remain readable before creating a draft", async () => {
+  let loadedTemplate: Record<string, unknown> = {};
+  const designer = {
+    loadTemplateData(template: unknown) {
+      loadedTemplate = template as Record<string, unknown>;
+      return true;
+    },
+    getTemplateData() {
+      return new Proxy(loadedTemplate, {});
+    },
+    async setTestData() {},
+    async setVariables() {},
+    setAvailableVariables() {},
+  } as unknown as DesignerElement;
+  const job: PrintJob = {
+    source: { baseId: "base", tableId: "table", recordIds: ["rec"] },
+    table: { name: "订单", fields: [{ id: "order", name: "订单编号", type: "1" }] },
+    documents: [{ recordId: "rec", values: { 订单编号: "PO-0001" } }],
+    generatedAt: "2026-10-08T06:00:00.000Z",
+  };
+
+  await bindPrintJob(designer, null, job);
+
+  const snapshot = getPersistentTemplateData(designer);
+  assert.equal((snapshot.canvasSize as { width: number }).width, 794);
+  assert.match(JSON.stringify(snapshot), /@__duowei_field_order/);
 });
 
 test("CT-DES-06: binding loads friendly editor content, resolved canvas data, and keeps a stable save snapshot", async () => {
@@ -763,6 +794,38 @@ test("SPEC-OUT-01/BUG-0002: composed output creates one explicit print box per e
   }
 });
 
+test("SPEC-BATCH-01: screen preview exposes separate paper boundaries without changing print media", () => {
+  const html = composeRenderedPrintPages({
+    recordIds: ["rec-1", "rec-2"],
+    pages: ["<div><div>one</div></div>", "<div><div>two</div></div>"],
+    pageCounts: [1, 1],
+    canvasWidth: 794,
+    canvasHeight: 1123,
+  });
+  assert.match(html, /@media screen/);
+  assert.match(html, /\.duowei-print-document\{[^}]*margin:0 auto 20px/);
+  assert.match(html, /background:#fff/);
+  assert.equal((html.match(/class="duowei-print-document"/g) ?? []).length, 2);
+});
+
+test("SPEC-OUT-01/BUG-0002: browser print document fixes page geometry and clips engine-only effects", () => {
+  const html = composeBrowserPrintDocument({
+    recordIds: ["rec-1"],
+    pages: ['<div><div class="print-page shadow-lg" style="box-shadow:0 10px 15px #000">one</div></div>'],
+    pageCounts: [1],
+    canvasWidth: 794,
+    canvasHeight: 1123,
+  });
+
+  assert.match(html, /@page\{size:794px 1123px;margin:0;\}/);
+  assert.match(html, /html,body\{[^}]*margin:0!important;[^}]*padding:0!important;/);
+  assert.match(html, /body > #duowei-print-root\{[^}]*width:794px!important;[^}]*overflow:visible!important;/);
+  assert.match(html, /\[data-duowei-print-page="true"\]\{[^}]*width:794px!important;[^}]*height:1123px!important;/);
+  assert.match(html, /\[data-duowei-print-page="true"\]\{[^}]*overflow:hidden!important;[^}]*break-inside:avoid-page!important;/);
+  assert.match(html, /\[data-duowei-print-page="true"\] > :first-child\{[^}]*box-shadow:none!important;[^}]*overflow:hidden!important;/);
+  assert.match(html, /\[data-duowei-print-page-last="true"\]\{[^}]*break-after:auto!important;[^}]*page-break-after:auto!important;/);
+});
+
 test("SPEC-BATCH-02: browser batch print invokes one document print", async () => {
   const calls: unknown[] = [];
   const designer = {
@@ -793,7 +856,7 @@ test("CT-BATCH-04: one ordered rendered batch serves both preview and one browse
   const preview = composeRenderedPrintPages(rendered);
   assert.deepEqual(rendered.recordIds, ["rec-3", "rec-1", "rec-2"]);
   assert.equal(rendered.pages.length, 3);
-  assert.equal((preview.match(/duowei-print-document/g) ?? []).length, 3);
+  assert.equal((preview.match(/class="duowei-print-document"/g) ?? []).length, 3);
   assert.deepEqual([...preview.matchAll(/<div><div>(rec-\d)<\/div><\/div>/g)].map((match) => match[1]),
     ["rec-3", "rec-1", "rec-2"]);
   assert.equal(renderedPreviewHeight(rendered), 1872);
@@ -1031,6 +1094,24 @@ test("CT-BATCH-04: an engine document with two pages contributes two preview pag
   }
 });
 
+test("SPEC-OUT-01/BUG-0002: output summary counts engine pages instead of rendered documents", () => {
+  assert.equal(renderedOutputPageCount({
+    layout: "labels",
+    recordIds: Array.from({ length: 7 }, (_, index) => `rec-${index + 1}`),
+    pages: ["<div>two label pages</div>"],
+    pageCounts: [2],
+    canvasWidth: 794,
+    canvasHeight: 1123,
+  }), 2);
+  assert.equal(renderedOutputPageCount({
+    recordIds: ["rec-1", "rec-2", "rec-3"],
+    pages: ["one", "two", "three"],
+    pageCounts: [1, 1, 1],
+    canvasWidth: 794,
+    canvasHeight: 1123,
+  }), 3);
+});
+
 test("CT-BATCH-04: an empty engine page container rejects the candidate and restores the old record", async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "DOMParser");
   Object.defineProperty(globalThis, "DOMParser", { configurable: true, value: class {
@@ -1126,10 +1207,11 @@ test("CT-BATCH-05: a superseded candidate must not restore variables into the ne
 
 test("CT-BATCH-05: restoring a batch record updates editable multi-field canvas values", async () => {
   let template: any;
+  let templateLoadCount = 0;
   const testData: Record<string, unknown>[] = [];
   const variables: Record<string, unknown>[] = [];
   const designer = {
-    loadTemplateData(value: unknown) { template = structuredClone(value); return true; },
+    loadTemplateData(value: unknown) { templateLoadCount += 1; template = structuredClone(value); return true; },
     getTemplateData() { return structuredClone(template); },
     setAvailableVariables() {},
     async setTestData(value: Record<string, unknown>) { testData.push(value); },
@@ -1155,17 +1237,159 @@ test("CT-BATCH-05: restoring a batch record updates editable multi-field canvas 
     canvasSize: { width: 794, height: 1123 },
   }, job);
 
-  const secondJob = { ...job, documents: [job.documents[1]], source: { ...job.source, recordIds: ["rec-2"] } };
-  await restorePrintJobVariables(designer, secondJob);
+  const loadCountBeforeSwitch = templateLoadCount;
+  await restorePrintJobVariables(designer, job, 1);
   const key = "__duowei_render_summary";
   assert.equal(variables.at(-1)?.[key], "订单：PO-0002，客户：乙公司");
   assert.equal(testData.at(-1)?.[key], "订单：PO-0002，客户：乙公司");
   assert.equal((getPersistentTemplateData(designer).pages as any)[0].elements[0].content,
     `订单：${token("order")}，客户：${token("customer")}`);
+  assert.equal(templateLoadCount, loadCountBeforeSwitch,
+    "switching an example record must not reload the shared template");
 
   await renderPrintJobPages(designer, job);
   assert.equal(variables.at(-1)?.[key], "订单：PO-0001，客户：甲公司");
   assert.equal(testData.at(-1)?.[key], "订单：PO-0001，客户：甲公司");
+});
+
+test("CT-BATCH-08-EDIT: invalid example indexes fail before changing designer runtime data", async () => {
+  const variables: Record<string, unknown>[] = [];
+  const designer = {
+    async setVariables(value: Record<string, unknown>) { variables.push(value); },
+  } as unknown as DesignerElement;
+  const job = outputJob(["rec-1", "rec-2"]);
+
+  await assert.rejects(() => restorePrintJobVariables(designer, job, 2), /示例记录不存在/);
+  assert.equal(variables.length, 0);
+});
+
+test("CT-BATCH-08-EDIT: a failed example switch rolls runtime data back without reloading the template", async () => {
+  let template: any;
+  let loadCount = 0;
+  let failNextSecondRecord = true;
+  const resolved: string[] = [];
+  const designer = {
+    loadTemplateData(value: unknown) { loadCount += 1; template = structuredClone(value); return true; },
+    getTemplateData() { return structuredClone(template); },
+    setAvailableVariables() {},
+    async setTestData() {},
+    async setVariables(value: Record<string, unknown>) {
+      const current = String(value.__duowei_render_summary ?? value.客户 ?? "");
+      resolved.push(current);
+      if (current.includes("rec-2") && failNextSecondRecord) {
+        failNextSecondRecord = false;
+        throw new Error("变量切换失败");
+      }
+    },
+  } as unknown as DesignerElement;
+  const job = outputJob(["rec-1", "rec-2"]);
+  const token = `@${fieldDataSourceId("customer")}`;
+  await bindPrintJob(designer, {
+    pages: [{ id: "p", elements: [{ id: "summary", type: "text", content: token }] }],
+    canvasSize: { width: 794, height: 1123 },
+  }, job);
+  const beforeSwitchLoads = loadCount;
+
+  await assert.rejects(() => restorePrintJobVariables(designer, job, 1), /变量切换失败/);
+  assert.equal(loadCount, beforeSwitchLoads);
+  assert.match(resolved.at(-1) ?? "", /rec-1/);
+  assert.equal((getPersistentTemplateData(designer).pages as any)[0].elements[0].content, token);
+});
+
+test("CT-BATCH-09-EDIT: the real designer receives every batch record and persists one shared template", async () => {
+  let template: any;
+  const variables: Record<string, unknown>[] = [];
+  const designer = {
+    loadTemplateData(value: unknown) { template = structuredClone(value); return true; },
+    getTemplateData() { return structuredClone(template); },
+    setAvailableVariables() {},
+    async setTestData() {},
+    async setVariables(value: Record<string, unknown>) { variables.push(value); },
+  } as unknown as DesignerElement;
+  const batch = outputJob(["甲公司", "乙公司", "丙公司"]);
+  const token = `@${fieldDataSourceId("customer")}`;
+
+  await bindBatchEditProjection(designer, {
+    pages: [{ id: "p", elements: [{ id: "summary", type: "text", content: `客户：${token}` }] }],
+    canvasSize: { width: 794, height: 1123 },
+  }, batch, "default");
+
+  assert.equal(template.pages.length, 3);
+  assert.match(JSON.stringify(variables.at(-1)), /甲公司/);
+  assert.match(JSON.stringify(variables.at(-1)), /乙公司/);
+  assert.match(JSON.stringify(variables.at(-1)), /丙公司/);
+  assert.equal((getPersistentTemplateData(designer).pages as any[]).length, 1);
+
+  template.pages[1].elements[0].content = "统一客户标题";
+  assert.equal(await synchronizeBatchEditProjection(designer), true);
+  assert.equal(template.pages.every((page: any) => page.elements[0].content === "统一客户标题"), true);
+  const persistent = getPersistentTemplateData(designer);
+  assert.equal((persistent.pages as any[])[0].elements[0].content, "统一客户标题");
+  const stored = JSON.stringify(persistent);
+  assert.equal(stored.includes("__duoweiBatch"), false);
+  assert.equal(stored.includes("甲公司") || stored.includes("乙公司") || stored.includes("丙公司"), false);
+  assert.equal(stored.includes("rec-1") || stored.includes("rec-2") || stored.includes("rec-3"), false);
+});
+
+test("CT-BATCH-09-EDIT: batch text focusout synchronizes the edited instance through the shared template", async () => {
+  let template: any;
+  const variables: Record<string, unknown>[] = [];
+  const root = new EventTarget();
+  let syncError: Error | undefined;
+  let synchronized = 0;
+  const designer = {
+    shadowRoot: root,
+    loadTemplateData(value: unknown) { template = structuredClone(value); return true; },
+    getTemplateData() { return structuredClone(template); },
+    setAvailableVariables() {},
+    async setTestData() {},
+    async setVariables(value: Record<string, unknown>) { variables.push(value); },
+  } as unknown as DesignerElement;
+  const stop = installDataSourceEditingLifecycle(designer, {
+    onChange: () => { synchronized += 1; },
+    onError: (error) => { syncError = error; },
+  });
+  const batch = outputJob(["甲公司", "乙公司", "丙公司"]);
+  const token = `@${fieldDataSourceId("customer")}`;
+
+  await bindBatchEditProjection(designer, {
+    pages: [{ id: "p", elements: [{ id: "summary", type: "text", content: `客户：${token}` }] }],
+    canvasSize: { width: 794, height: 1123 },
+  }, batch, "default");
+
+  template.pages[2].elements[0].content = "公司：@客户";
+  const wrapper = { getAttribute: (name: string) => name === "data-element-id" ? "summary" : null };
+  let closestCalls = 0;
+  const textarea = {
+    tagName: "TEXTAREA",
+    closest: (selector: string) => {
+      closestCalls += 1;
+      return selector === ".element-wrapper[data-element-id]"
+        ? wrapper
+        : selector === ".element-wrapper[data-element-id] [data-text-content]" ? {} : null;
+    },
+  };
+  const focusout = new Event("focusout");
+  Object.defineProperty(focusout, "composedPath", { value: () => [textarea, root] });
+  root.dispatchEvent(focusout);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(syncError, undefined);
+  assert.equal(closestCalls > 0, true);
+  assert.equal(synchronized, 1);
+  assert.equal(template.pages.length, 3);
+  assert.deepEqual(template.pages.map((page: any) => page.elements[0].content), [
+    "公司：@客户",
+    "公司：@客户",
+    "公司：@客户",
+  ]);
+  assert.match(JSON.stringify(variables.at(-1)), /公司：甲公司/);
+  assert.match(JSON.stringify(variables.at(-1)), /公司：乙公司/);
+  assert.match(JSON.stringify(variables.at(-1)), /公司：丙公司/);
+  const persistent = getPersistentTemplateData(designer);
+  assert.equal((persistent.pages as any[]).length, 1);
+  assert.equal((persistent.pages as any[])[0].elements[0].content, `公司：${token}`);
+  stop();
 });
 
 test("SPEC-OUT-01: browser print rejects empty rendered output", async () => {
@@ -1210,7 +1434,7 @@ test("SPEC-UX-07: designer save and save-as delegate once to the host storage us
   assert.equal(upstream, 1);
 });
 
-test("SPEC-UX-03/07: locked designer header and panel selectors keep one component/save surface", () => {
+test("SPEC-UX-03/07/13: locked designer chrome keeps one component/save surface and the native property editor", () => {
   const bundle = readFileSync("node_modules/vue-print-designer/dist/web-component-zZPzxxzQ.js", "utf8");
   assert.match(bundle, /class: "h-14 bg-white border-b border-gray-200 grid/);
   assert.match(bundle, /__name: "HeaderElementsBar"/);
@@ -1244,7 +1468,6 @@ test("SPEC-UX-03/07: locked designer header and panel selectors keep one compone
     assert.match(appended[0].textContent, /button\[title\^="主题:"\]/);
     assert.deepEqual(closedPanels, [
       "designer:close-elements-panel",
-      "designer:close-properties-panel",
       "designer:close-structure-panel",
     ]);
     stop();

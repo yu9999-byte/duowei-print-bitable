@@ -1,33 +1,87 @@
 type StoredValue = unknown;
 
 const storage = new Map<string, StoredValue>();
+const query = new URLSearchParams(window.location.search);
+const persistentStorageNamespace = query.get("storage");
 
-const records: Record<string, Record<string, string>> = {
-  rec001: {
-    fldOrder: "DW-2026-001",
-    fldCustomer: "远山科技",
-    fldProduct: "工业标签打印机",
-    fldQuantity: "2",
-    fldAmount: "¥ 4,980.00",
-    fldAddress: "上海市浦东新区张江路 88 号",
-  },
-  rec002: {
-    fldOrder: "DW-2026-002",
-    fldCustomer: "海川设计",
-    fldProduct: "热敏标签纸",
-    fldQuantity: "12",
-    fldAmount: "¥ 1,188.00",
-    fldAddress: "杭州市余杭区文一西路 969 号",
-  },
-  rec003: {
-    fldOrder: "DW-2026-003",
-    fldCustomer: "青禾商贸",
-    fldProduct: "条码扫描器",
-    fldQuantity: "4",
-    fldAmount: "¥ 2,760.00",
-    fldAddress: "苏州市工业园区星湖街 328 号",
-  },
-};
+function browserStorageKey(key: string): string {
+  return `duowei-print-workspace:${persistentStorageNamespace}:${key}`;
+}
+
+function readStoredValue<T>(key: string): T | null {
+  if (!persistentStorageNamespace) {
+    return (storage.get(key) as T | undefined) ?? null;
+  }
+  const serialized = window.sessionStorage.getItem(browserStorageKey(key));
+  if (serialized === null) return null;
+  try {
+    return JSON.parse(serialized) as T;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredValue<T>(key: string, value: T): boolean {
+  if (!persistentStorageNamespace) {
+    storage.set(key, value);
+    return true;
+  }
+  window.sessionStorage.setItem(browserStorageKey(key), JSON.stringify(value));
+  return true;
+}
+
+const customerNames = [
+  "远山科技",
+  "海川设计",
+  "青禾商贸",
+  "北辰制造",
+  "云帆物流",
+  "启明零售",
+  "新岸电子",
+  "木棉家居",
+  "远景包装",
+  "星河食品",
+];
+
+const productNames = [
+  "工业标签打印机",
+  "热敏标签纸",
+  "条码扫描器",
+  "仓储周转箱",
+  "便携式打印机",
+  "标签碳带",
+  "无线扫码枪",
+  "商品价签纸",
+  "物流面单纸",
+  "冷链标签",
+];
+
+const records = Object.fromEntries(
+  Array.from({ length: 10 }, (_, index) => {
+    const sequence = index + 1;
+    const recordId = `rec${String(sequence).padStart(3, "0")}`;
+    return [
+      recordId,
+      {
+        fldOrder: `DW-2026-${String(sequence).padStart(3, "0")}`,
+        fldCustomer: customerNames[index],
+        fldProduct: productNames[index],
+        fldQuantity: String(sequence * 2),
+        fldAmount: `¥ ${(sequence * 1188).toLocaleString("zh-CN")}.00`,
+        fldAddress: `测试收货地址 ${sequence} 号`,
+      },
+    ];
+  }),
+) as Record<string, Record<string, string>>;
+
+const selectedRecordCount = Math.min(
+  10,
+  Math.max(1, Number(query.get("records")) || 3),
+);
+const selectedRecordIds = Array.from(
+  { length: selectedRecordCount },
+  (_, index) => `rec${String(index + 1).padStart(3, "0")}`,
+);
 
 const fields = [
   { id: "fldOrder", name: "订单编号", type: 1, isPrimary: true },
@@ -92,17 +146,15 @@ export const bitable = {
   },
   bridge: {
     async getData<T>(key: string): Promise<T | null> {
-      return (storage.get(key) as T | undefined) ?? null;
+      return readStoredValue<T>(key);
     },
     async setData<T>(key: string, value: T): Promise<boolean> {
-      storage.set(key, value);
-      return true;
+      return writeStoredValue(key, value);
     },
   },
   ui: {
     async selectRecordIdList() {
-      return ["rec001", "rec002", "rec003"];
+      return selectedRecordIds;
     },
   },
 };
-

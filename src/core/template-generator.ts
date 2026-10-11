@@ -1,8 +1,7 @@
-import type { PrintJob, NormalizedField, PrintableValue } from "./print-job.ts";
+import { isDetailLinkField, type PrintJob, type NormalizedField, type PrintableValue } from "./print-job.ts";
 import {
   buildDataSourceCatalog,
   fieldDataSourceId,
-  SYSTEM_PRINT_DATE_ID,
   type DesignerDataSourceGroup,
 } from "./data-sources.ts";
 
@@ -45,8 +44,22 @@ const variable = (name: string) => "@" + name;
 const autoId = (prefix: string, index: number) => "auto-" + prefix + "-" + (index + 1);
 const LONG_TEXT_THRESHOLD = 60;
 
+export function generateBlankTemplate(job: Pick<PrintJob, "table" | "documents">): DesignerTemplate {
+  return {
+    pages: [{ id: "blank-page-1", elements: [] }],
+    canvasSize: { width: PAGE_WIDTH, height: PAGE_HEIGHT },
+    unit: "px",
+    showGrid: true,
+    allowDragOutsideCanvas: false,
+    ext: {
+      availableVariables: buildDataSourceCatalog(job.table.fields),
+      fieldBindings: Object.fromEntries(job.table.fields.map((field) => [field.id, field.name])),
+    },
+  };
+}
+
 export function generateLabelTemplate(job: Pick<PrintJob, "table" | "documents">): DesignerTemplate {
-  const fields = job.table.fields.filter((field) => !field.isLink && !field.arrayColumns);
+  const fields = job.table.fields.filter((field) => !isDetailLinkField(field));
   if (!fields.length) throw new Error("当前表没有适合放入标签的普通字段");
   const selected = [fields.find((field) => field.isPrimary) ?? fields[0]];
   const second = fields.find((field) => field.id !== selected[0].id);
@@ -77,7 +90,7 @@ export function generateLabelTemplate(job: Pick<PrintJob, "table" | "documents">
 }
 
 export function generateContinuousTemplate(job: Pick<PrintJob, "table" | "documents">): DesignerTemplate {
-  const fields = job.table.fields.filter((field) => !field.isLink && !field.arrayColumns);
+  const fields = job.table.fields.filter((field) => !isDetailLinkField(field));
   if (!fields.length) throw new Error("当前表没有适合连续排版的普通字段");
   const elements: TemplateElement[] = [];
   let y = 28;
@@ -105,21 +118,7 @@ export function generateContinuousTemplate(job: Pick<PrintJob, "table" | "docume
     y += FIELD_HEIGHT + ROW_GAP;
   }
 
-  const printedAtToken = variable(SYSTEM_PRINT_DATE_ID);
-  elements.push({
-    id: "continuous-printed-at",
-    type: "text",
-    x: SIDE_MARGIN,
-    y: y + 4,
-    width: CONTENT_WIDTH,
-    height: 24,
-    content: `打印日期：${printedAtToken}`,
-    variable: printedAtToken,
-    printable: true,
-    style: { fontSize: 12, color: "#4b5563", backgroundColor: "transparent",
-      borderColor: "transparent", textAlign: "right", verticalAlign: "middle" },
-  });
-  const canvasHeight = y + 56;
+  const canvasHeight = y + 28;
   return {
     pages: [{ id: "continuous-page-1", elements }],
     canvasSize: { width: PAGE_WIDTH, height: canvasHeight },
@@ -181,7 +180,7 @@ function line(y: number, id = "auto-divider"): TemplateElement {
 
 export function generateTemplate(job: Pick<PrintJob, "table" | "documents">): DesignerTemplate {
   const fields = job.table.fields;
-  const linkFields = fields.filter((field) => field.isLink || Boolean(field.arrayColumns));
+  const linkFields = fields.filter(isDetailLinkField);
   const normalFields = fields.filter((field) => !linkFields.includes(field));
   const sample = job.documents[0]?.values ?? {};
   const longFields = normalFields.filter((field) => isLongField(field, job.documents));
@@ -354,21 +353,6 @@ export function generateTemplate(job: Pick<PrintJob, "table" | "documents">): De
       },
     });
     y += 244;
-  });
-
-  const printedAtToken = variable(SYSTEM_PRINT_DATE_ID);
-  pages[0].elements.push({
-    id: "auto-printed-at",
-    type: "text",
-    x: PAGE_WIDTH - SIDE_MARGIN - 260,
-    y: PAGE_HEIGHT - 74,
-    width: 260,
-    height: 28,
-    content: "打印日期：" + printedAtToken,
-    variable: printedAtToken,
-    repeatPerPage: true,
-    printable: true,
-    style: { fontSize: 12, color: "#4b5563", backgroundColor: "transparent", borderColor: "transparent", textAlign: "right" },
   });
 
   return {

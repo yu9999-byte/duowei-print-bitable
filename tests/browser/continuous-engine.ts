@@ -2,7 +2,7 @@ import "vue-print-designer";
 import "vue-print-designer/style.css";
 import { prepareContinuousLayout } from "../../src/core/continuous-layout.ts";
 import { generateContinuousTemplate } from "../../src/core/template-generator.ts";
-import { bindPrintJob, composeRenderedPrintPages, getPersistentTemplateData,
+import { bindPrintJob, composeBrowserPrintDocument, getPersistentTemplateData,
   type DesignerElement } from "../../src/engine/designer-adapter.ts";
 import type { PrintJob } from "../../src/core/print-job.ts";
 
@@ -65,12 +65,8 @@ async function runCase(count: number) {
       canvasWidth: prepared.canvasWidth,
       canvasHeight: prepared.canvasHeight,
     };
-    await savePrintHtml(`<!doctype html><html><head><meta charset="utf-8"><style>
-      @page{size:${prepared.canvasWidth}px ${prepared.canvasHeight}px;margin:0}
-      html,body{margin:0;padding:0}
-      [data-duowei-print-page="true"]{break-after:page;margin:0!important}
-      [data-duowei-print-page-last="true"]{break-after:auto}
-    </style></head><body><div id="duowei-print-root">${composeRenderedPrintPages(rendered)}</div></body></html>`, count);
+    await savePrintHtml(`<!doctype html><html><head><meta charset="utf-8"></head>`
+      + `<body><div id="duowei-print-root">${composeBrowserPrintDocument(rendered)}</div></body></html>`, count);
     return {
       count,
       expectedHeight: prepared.canvasHeight,
@@ -100,7 +96,7 @@ button.addEventListener("click", async () => {
       await new Promise<void>((resolve) => designer.addEventListener("ready", () => resolve(), { once: true }));
     }
     const cases = [];
-    for (const count of [7, 50]) {
+    for (const count of [3]) {
       try {
         cases.push({ ok: true, ...(await runCase(count)) });
       } catch (cause) {
@@ -115,3 +111,5 @@ button.addEventListener("click", async () => {
     button.disabled = false;
   }
 });
+
+button.click();

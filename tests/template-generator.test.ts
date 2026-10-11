@@ -3,7 +3,7 @@ import { performance } from "node:perf_hooks";
 import test from "node:test";
 import { generateContinuousTemplate, generateTemplate } from "../src/core/template-generator.ts";
 import { hasContinuousLayout, prepareContinuousLayout } from "../src/core/continuous-layout.ts";
-import { fieldDataSourceId } from "../src/core/data-sources.ts";
+import { fieldDataSourceId, SYSTEM_PRINT_DATE_ID } from "../src/core/data-sources.ts";
 
 const job = {
   table: {
@@ -75,7 +75,19 @@ test("SPEC-TPL-01: generated template uses engine page schema and required secti
   assert.equal(template.pages.length, 1);
   assert.deepEqual(template.canvasSize, { width: 794, height: 1123 });
   const types = template.pages[0].elements.map((element) => element.type);
-  assert.deepEqual(types, ["text", "line", "text", "text", "text", "text", "table", "text"]);
+  assert.deepEqual(types, ["text", "line", "text", "text", "text", "text", "table"]);
+});
+
+test("SPEC-TPL-01: automatic templates do not place system print date on the canvas", () => {
+  for (const template of [generateTemplate(job), generateContinuousTemplate(job)]) {
+    const elements = template.pages.flatMap((page) => page.elements);
+    assert.ok(!elements.some((element) => element.id === "auto-printed-at"
+      || element.id === "continuous-printed-at"));
+    assert.ok(!elements.some((element) => element.variable === `@${SYSTEM_PRINT_DATE_ID}`));
+    assert.ok(template.ext.availableVariables
+      .flatMap((group) => group.children)
+      .some((source) => source.id === SYSTEM_PRINT_DATE_ID));
+  }
 });
 
 test("SPEC-CONT-02: generated continuous template is fixed-height and native-layout ready", () => {
@@ -142,6 +154,27 @@ test("SPEC-LINK-01: link field table binds the array variable and columns", () =
   assert.deepEqual(table?.data, [{ product: "纸", qty: 2 }]);
 });
 
+test("SPEC-LINK-01: a reference link is generated as readable text instead of a detail table", () => {
+  const template = generateTemplate({
+    table: { name: "订单", fields: [{
+      id: "parent",
+      name: "父记录",
+      type: "18",
+      isLink: true,
+      linkKind: "reference",
+    }] },
+    documents: [{ recordId: "rec-2", values: { 父记录: "PO-0001" } }],
+  });
+  const elements = template.pages.flatMap((page) => page.elements);
+  assert.ok(elements.some((element) => element.type === "text"
+    && element.content === `父记录：@${fieldDataSourceId("parent")}`));
+  assert.ok(!elements.some((element) => element.type === "table"));
+  const source = template.ext.availableVariables
+    .flatMap((group) => group.children)
+    .find((item) => item.id === fieldDataSourceId("parent"));
+  assert.equal(source?.isArray, undefined);
+});
+
 test("SPEC-LINK-03: an empty linked table has a separate variable-driven empty state", () => {
   const template = generateTemplate(job);
   const emptyState = template.pages[0].elements.find((element) => element.id === "auto-link-empty-lines");
@@ -191,7 +224,7 @@ test("SPEC-TPL-04: long text opts into the engine auto-height flow", () => {
   assert.equal(memo?.style.autoHeight, true);
 });
 
-test("SPEC-TPL-04: print date repeats on pages created by auto-height/table pagination", () => {
-  const printedAt = generateTemplate(job).pages[0].elements.find((element) => element.id === "auto-printed-at");
-  assert.equal(printedAt?.repeatPerPage, true);
+test("SPEC-TPL-04: automatic pagination does not inject a system field", () => {
+  const elements = generateTemplate(job).pages.flatMap((page) => page.elements);
+  assert.ok(!elements.some((element) => element.id === "auto-printed-at"));
 });

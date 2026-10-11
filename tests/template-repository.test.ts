@@ -8,6 +8,10 @@ import {
   templateCollectionKey,
   type TemplateStorage,
 } from "../src/core/template-repository.ts";
+import {
+  getBatchLayoutMode,
+  setBatchLayoutMode,
+} from "../src/components/template-layout-choice.ts";
 
 function template(value = "不应持久化的客户甲", titleX = 0) {
   return {
@@ -83,6 +87,47 @@ test("SPEC-UX-06/SPEC-SAVE-01: two independent templates persist with one defaul
   const empty = await repository.remove(context, "second", removed.revision);
   assert.deepEqual(empty.templates, []);
   assert.equal(empty.defaultId, null);
+});
+
+test("SPEC-SAVE-05: two members using the same Base bridge scope observe one template collection", async () => {
+  const fixture = memoryStorage();
+  const memberA = createTemplateRepository(fixture.storage);
+  const memberB = createTemplateRepository(fixture.storage);
+  const sharedContext = { baseId: "base-orders", tableId: "table-orders" };
+
+  const createdByA = await memberA.upsert(sharedContext, template("member-a"), {
+    id: "shared", name: "共享发货单", expectedRevision: null,
+  });
+  const observedByB = await memberB.list(sharedContext);
+
+  assert.deepEqual(observedByB, createdByA);
+  assert.equal(observedByB.templates[0].name, "共享发货单");
+  assert.deepEqual(
+    await memberB.list({ baseId: "base-orders", tableId: "table-other" }),
+    { templates: [], defaultId: null, revision: null },
+  );
+});
+
+test("SPEC-BATCH-10: changing one template batch layout keeps its id, count, and sibling unchanged", async () => {
+  const fixture = memoryStorage();
+  const repository = createTemplateRepository(fixture.storage);
+  const context = { baseId: "base-orders", tableId: "table-orders" };
+  const first = await repository.upsert(context, template("first"), {
+    id: "first", name: "发货单", expectedRevision: null,
+  });
+  const second = await repository.upsert(context, template("second", 100), {
+    id: "second", name: "对账单", expectedRevision: first.revision,
+  });
+  const siblingBefore = second.templates.find((item) => item.id === "second")!;
+  const current = second.templates.find((item) => item.id === "first")!;
+  const changed = await repository.upsert(context, setBatchLayoutMode(current.template, "continuous"), {
+    id: current.id, name: current.name, expectedRevision: second.revision,
+  });
+
+  assert.equal(changed.templates.length, 2);
+  assert.deepEqual(changed.templates.map((item) => item.id), ["first", "second"]);
+  assert.equal(getBatchLayoutMode(changed.templates.find((item) => item.id === "first")!.template), "continuous");
+  assert.deepEqual(changed.templates.find((item) => item.id === "second"), siblingBefore);
 });
 
 test("SPEC-SAVE-01/04: v1 stays untouched until a valid v2 mutation, stale revision cannot overwrite", async () => {

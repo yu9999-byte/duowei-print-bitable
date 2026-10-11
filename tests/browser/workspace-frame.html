@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>多维打印尺寸验收壳</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: #dfe2e7; }
+    body { display: grid; place-items: start center; padding: 8px; }
+    iframe { display: block; border: 0; background: #fff; box-shadow: 0 1px 6px rgba(31, 35, 41, .16); }
+  </style>
+</head>
+<body>
+  <iframe id="workspace" title="多维打印测试工作台" src="/"></iframe>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const width = Math.max(320, Number(params.get("width")) || 932);
+    const height = Math.max(320, Number(params.get("height")) || 540);
+    const records = Math.min(10, Math.max(1, Number(params.get("records")) || 3));
+    const storage = params.get("storage");
+    const frame = document.querySelector("#workspace");
+    const frameParams = new URLSearchParams({ records: String(records) });
+    if (storage) frameParams.set("storage", storage);
+    frame.src = `/?${frameParams.toString()}`;
+    frame.style.width = `${width}px`;
+    frame.style.height = `${height}px`;
+  </script>
+</body>
+</html>

@@ -2,6 +2,7 @@
 import { bitable } from "@lark-base-open/js-sdk";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
+  bindBatchEditProjection,
   bindPrintJob,
   bindStoredTemplateOrFallback,
   composeRenderedPrintPages,
@@ -17,8 +18,10 @@ import {
   renderPrintJobPages,
   renderPrintJobCandidate,
   renderedPreviewHeight,
+  renderedOutputPageCount,
   printRenderedPages,
   rememberCopiedDataSource,
+  synchronizeBatchEditProjection,
   type DesignerElement,
 } from "./engine/designer-adapter.ts";
 import {
@@ -31,16 +34,25 @@ import {
 import { loadPrintJob } from "./host/bitable-gateway.ts";
 import { templateRepository } from "./host/template-storage.ts";
 import type { PrintJob } from "./core/print-job.ts";
-import { generateContinuousTemplate, generateLabelTemplate } from "./core/template-generator.ts";
-import { hasNativeLabelGrid } from "./core/label-layout.ts";
-import { hasContinuousLayout } from "./core/continuous-layout.ts";
 import {
-  MAX_BATCH_RECORDS,
+  generateBlankTemplate,
+  generateLabelTemplate,
+  generateTemplate,
+} from "./core/template-generator.ts";
+import {
   createSinglePrintSession,
+  shouldExitBatchOnTemplateSwitch,
   type BatchPrintSession,
 } from "./core/batch-print-session.ts";
 import { prepareBatchCandidate } from "./core/batch-candidate-transaction.ts";
+import {
+  createBatchRetryRequest,
+  isBatchRetryRequestCurrent,
+  type BatchRetryRequest,
+} from "./core/batch-retry-request.ts";
+import { commitBatchLayoutChange } from "./core/batch-layout-transaction.ts";
 import { commitBatchTemplateEdit } from "./core/batch-template-edit.ts";
+import { prepareTemplateCandidate } from "./core/template-candidate-transaction.ts";
 import type { RenderedPrintJob } from "./engine/designer-adapter.ts";
 import {
   buildDataSourceClipboardPayload,
@@ -53,6 +65,22 @@ import {
 } from "./components/batch-read-feedback.ts";
 import { getBatchWorkspaceActionState } from "./components/batch-workspace-action-state.ts";
 import { normalizeTemplateName } from "./components/template-management.ts";
+import {
+  DESIGNER_COMPONENT_GROUPS,
+  type DesignerComponentType,
+} from "./components/designer-components.ts";
+import {
+  BATCH_LAYOUT_OPTIONS,
+  ensureBatchLayout,
+  getBatchLayoutMode,
+  mergeEditedBaseTemplate,
+  mergeEditedBatchLayout,
+  type BatchLayoutMode,
+} from "./components/template-layout-choice.ts";
+import {
+  TEMPLATE_CREATION_OPTIONS,
+  type TemplateCreateKind,
+} from "./components/template-creation-choice.ts";
 import { getWorkspacePresentation } from "./components/workspace-presentation.ts";
 import {
   canEnterTemplateEdit,
@@ -65,7 +93,6 @@ import {
   modeAfterDiscardForLoadRequest,
   shouldIgnorePendingSelectionChange,
   shouldGuardUnsavedNavigation,
-  toggleWorkspaceMode,
   type EditorPanel,
   type TemplateStatus,
   type WorkspaceMode,
@@ -93,12 +120,16 @@ const templateManagementCardRef = ref<HTMLElement | null>(null);
 const templateManagementCancelRef = ref<HTMLButtonElement | null>(null);
 const pendingContext = ref<FeishuSelection | null>(null);
 const pendingLoadRequest = ref<"current" | "batch" | "exit" | null>(null);
+const pendingPreviewTemplateId = ref<string | null>(null);
 const workspaceMode = ref<WorkspaceMode>(initialWorkspaceMode());
 const activeEditorPanel = ref<EditorPanel>("data-sources");
 const previewHtml = ref("");
 const previewError = ref("");
 const templateWarning = ref("");
+const templateCreateError = ref("");
+const lastTemplateCreateKind = ref<TemplateCreateKind>("automatic");
 const batchRetryAvailable = ref(false);
+const batchRetryRequest = ref<BatchRetryRequest | null>(null);
 const designerReady = ref(false);
 const batchSession = ref<BatchPrintSession>(createSinglePrintSession(null));
 const renderedPages = ref<RenderedPrintJob | null>(null);
@@ -108,11 +139,11 @@ const error = ref("");
 const busy = ref(false);
 const activeTemplateMenuId = ref<string | null>(null);
 const newTemplateMenuOpen = ref(false);
-const editMoreMenuOpen = ref(false);
 const statusToastVisible = ref(false);
 let contextRevision = 0;
 let candidateRender: Promise<RenderedPrintJob> | null = null;
 let statusToastTimer: ReturnType<typeof setTimeout> | undefined;
+let batchProjectionSyncTimer: ReturnType<typeof setTimeout> | undefined;
 let stopSelectionWatch: (() => void) | undefined;
 let stopDataSourceTerminology: (() => void) | undefined;
 let stopDataSourceEditingLifecycle: (() => void) | undefined;
@@ -160,9 +191,16 @@ const batchWorkspaceActions = computed(() => getBatchWorkspaceActionState({
   hasRenderedPages: Boolean(renderedPages.value),
   session: batchSession.value,
 }));
-const renderedLayoutLabel = computed(() => renderedPages.value?.layout === "labels"
+const renderedLayout = computed<"default" | "continuous" | "labels">(() =>
+  renderedPages.value?.layout === "labels"
+    ? "labels"
+    : renderedPages.value?.layout === "continuous" ? "continuous" : "default");
+const renderedLayoutLabel = computed(() => renderedLayout.value === "labels"
   ? "标签排版"
-  : renderedPages.value?.layout === "continuous" ? "连续排版" : "默认排版");
+  : renderedLayout.value === "continuous" ? "连续排版" : "默认排版");
+const currentBatchLayout = computed<BatchLayoutMode>(() => storedTemplate.value
+  ? getBatchLayoutMode(storedTemplate.value.template)
+  : renderedLayout.value);
 const currentRecordLabel = computed(() => {
   return batchSession.value.mode === "batch"
     ? `已选 ${batchSession.value.committedRecordIds.length} 条`
@@ -194,28 +232,25 @@ watch(status, () => {
   }, 2600);
 });
 
+watch(selectedTemplateId, (templateId) => {
+  if (!batchRetryRequest.value || batchRetryRequest.value.templateId === templateId) return;
+  batchRetryRequest.value = null;
+  batchRetryAvailable.value = false;
+});
+
 function closeTransientMenus() {
   activeTemplateMenuId.value = null;
   newTemplateMenuOpen.value = false;
-  editMoreMenuOpen.value = false;
 }
 
 function toggleTemplateMenu(id: string) {
   newTemplateMenuOpen.value = false;
-  editMoreMenuOpen.value = false;
   activeTemplateMenuId.value = activeTemplateMenuId.value === id ? null : id;
 }
 
 function toggleNewTemplateMenu() {
   activeTemplateMenuId.value = null;
-  editMoreMenuOpen.value = false;
   newTemplateMenuOpen.value = !newTemplateMenuOpen.value;
-}
-
-function toggleEditMoreMenu() {
-  activeTemplateMenuId.value = null;
-  newTemplateMenuOpen.value = false;
-  editMoreMenuOpen.value = !editMoreMenuOpen.value;
 }
 
 function handleGlobalPointerDown(event: PointerEvent) {
@@ -270,6 +305,7 @@ function invalidateContext() {
   previewError.value = "";
   templateWarning.value = "";
   batchRetryAvailable.value = false;
+  batchRetryRequest.value = null;
   workspaceMode.value = initialWorkspaceMode();
   batchSession.value = createSinglePrintSession(null);
   renderedPages.value = null;
@@ -293,6 +329,7 @@ async function loadRecords(useBatchPicker = false) {
   error.value = "";
   batchRetryAvailable.value = false;
   if (!useBatchPicker) {
+    batchRetryRequest.value = null;
     selection.value = null;
     printJob.value = null;
     templateChecksum.value = null;
@@ -349,32 +386,57 @@ async function loadRecords(useBatchPicker = false) {
   }
 }
 
-async function loadBatchCandidate() {
+async function loadBatchCandidate(retryRequest?: BatchRetryRequest) {
   const revision = ++contextRevision;
   const previous = printJob.value;
   const designer = designerRef.value;
   let pending: Promise<RenderedPrintJob> | null = null;
+  let previousDesignerTemplate: unknown = null;
   busy.value = true;
   error.value = "";
   batchRetryAvailable.value = false;
+  if (!retryRequest) batchRetryRequest.value = null;
+  let candidateRequest = retryRequest ?? null;
   try {
     if (!designer || !previous || !templateLoaded.value) throw new Error("请先等待当前记录和模板加载完成");
+    previousDesignerTemplate = getPersistentTemplateData(designer);
     const active = await getActiveSelection();
     await assertCurrentContext(active, revision);
-    const ids = await selectRecordIds(active);
-    await assertCurrentContext(active, revision);
+    if (retryRequest && !isBatchRetryRequestCurrent(
+      retryRequest,
+      active,
+      selectedTemplateId.value,
+    )) {
+      throw new Error("当前记录、数据表、视图或模板已变化，请重新选择打印记录");
+    }
+    const ids = retryRequest
+      ? [...retryRequest.recordIds]
+      : await selectRecordIds(active);
+    if (!retryRequest) await assertCurrentContext(active, revision);
     if (!ids.length) {
       status.value = "未更改打印记录";
       return;
     }
-    if (ids.length > MAX_BATCH_RECORDS) {
-      throw new Error(`一次最多选择 ${MAX_BATCH_RECORDS} 条记录；未更改当前打印批次`);
+    if (!candidateRequest) {
+      if (!selectedTemplateId.value) throw new Error("请先选择打印模板");
+      candidateRequest = createBatchRetryRequest(active, selectedTemplateId.value, ids);
     }
     const candidate = await prepareBatchCandidate({
       currentSession: batchSession.value,
-      loadJob: () => loadPrintJob(active, ids),
+      templateId: selectedTemplateId.value,
+      requestedRecordIds: candidateRequest.recordIds,
+      loadJob: (recordIds) => loadPrintJob(active, [...recordIds]),
       assertCurrent: () => assertCurrentContext(active, revision),
-      renderJob: (job) => {
+      renderJob: async (job) => {
+        const canonical = storedTemplate.value?.template ?? previousDesignerTemplate;
+        const mode = getBatchLayoutMode(canonical);
+        const layout = ensureBatchLayout(
+          canonical,
+          mode,
+          () => generateLabelTemplate(job),
+          () => generateTemplate(job),
+        );
+        await bindPrintJob(designer, layout.effectiveTemplate, job);
         pending = renderPrintJobCandidate(
           designer, previous, job,
           (current, total) => { status.value = `正在生成批次预览 ${current}/${total}`; },
@@ -392,12 +454,21 @@ async function loadBatchCandidate() {
     previewHtml.value = candidate.previewHtml;
     batchPreviewStale.value = false;
     previewError.value = "";
+    batchRetryRequest.value = null;
     workspaceMode.value = "preview";
     status.value = `已选 ${ids.length} 条，批次预览已生成`;
   } catch (cause) {
     if (revision === contextRevision) {
+      if (designer && previous && previousDesignerTemplate) {
+        try {
+          await bindPrintJob(designer, previousDesignerTemplate, previous);
+        } catch {
+          // The committed preview remains available even if the hidden editor cannot be restored.
+        }
+      }
       const feedback = getBatchReadFailureFeedback(cause);
       batchRetryAvailable.value = feedback.retryAvailable;
+      batchRetryRequest.value = feedback.retryAvailable ? candidateRequest : null;
       error.value = feedback.error;
       status.value = feedback.status;
     }
@@ -407,15 +478,25 @@ async function loadBatchCandidate() {
   }
 }
 
+async function retryBatchCandidate() {
+  const request = batchRetryRequest.value;
+  if (!request || busy.value) return;
+  await loadBatchCandidate(request);
+}
+
 async function exitBatchMode() {
   if (!isBatchMode.value || busy.value) return;
   const revision = ++contextRevision;
   const designer = designerRef.value;
   const previous = printJob.value;
+  const previousDesignerTemplate = designerRef.value
+    ? getPersistentTemplateData(designerRef.value)
+    : null;
   let pending: Promise<RenderedPrintJob> | null = null;
   busy.value = true;
   error.value = "";
   batchRetryAvailable.value = false;
+  batchRetryRequest.value = null;
   try {
     if (!designer || !previous) return;
     const active = await getActiveSelection();
@@ -423,6 +504,16 @@ async function exitBatchMode() {
     if (!ids.length) throw new Error("当前宿主记录不可用；原批次已保留");
     const job = await loadPrintJob(active, ids);
     await assertCurrentContext(active, revision);
+    const canonical = storedTemplate.value?.template ?? previousDesignerTemplate;
+    if (canonical) {
+      const baseLayout = ensureBatchLayout(
+        canonical,
+        "default",
+        () => generateLabelTemplate(job),
+        () => generateTemplate(job),
+      );
+      await bindPrintJob(designer, baseLayout.effectiveTemplate, job);
+    }
     pending = renderPrintJobCandidate(designer, previous, job, undefined,
       () => revision === contextRevision);
     candidateRender = pending;
@@ -439,6 +530,13 @@ async function exitBatchMode() {
     status.value = "已返回当前记录";
   } catch (cause) {
     if (revision === contextRevision) {
+      if (designer && previous && previousDesignerTemplate) {
+        try {
+          await bindPrintJob(designer, previousDesignerTemplate, previous);
+        } catch {
+          // Keep the committed batch preview as the visible fallback.
+        }
+      }
       error.value = cause instanceof Error ? cause.message : "返回当前记录失败；原批次已保留";
       status.value = "原批次已保留";
     }
@@ -469,7 +567,15 @@ async function loadTemplateAndPreview(
     const stored = collection.templates.find((item) => item.id === id) ?? null;
     if (id && id !== "automatic" && !stored) throw new Error("所选模板已不存在，请重新加载");
     await assertCurrentContext(active, revision);
-    const bindWarning = await bindStoredTemplateOrFallback(designerRef.value, stored?.template, job);
+    const singleTemplate = stored
+      ? ensureBatchLayout(
+        stored.template,
+        "default",
+        () => generateLabelTemplate(job),
+        () => generateTemplate(job),
+      ).effectiveTemplate
+      : undefined;
+    const bindWarning = await bindStoredTemplateOrFallback(designerRef.value, singleTemplate, job);
     await assertCurrentContext(active, revision);
     warning ??= bindWarning;
     templateCollection.value = collection;
@@ -546,13 +652,49 @@ function refreshTemplateDirtyState() {
   return templateDirty.value;
 }
 
+async function flushBatchProjectionSync(): Promise<boolean> {
+  if (batchProjectionSyncTimer) {
+    clearTimeout(batchProjectionSyncTimer);
+    batchProjectionSyncTimer = undefined;
+  }
+  if (workspaceSurface.value !== "batch-edit" || !designerRef.value) return false;
+  try {
+    const synchronized = await synchronizeBatchEditProjection(designerRef.value);
+    refreshTemplateDirtyState();
+    return synchronized;
+  } catch (cause) {
+    const syncError = cause instanceof Error ? cause : new Error("批量模板同步失败");
+    error.value = syncError.message;
+    status.value = "批量模板修改未同步，请撤销冲突修改后重试";
+    throw syncError;
+  }
+}
+
+function scheduleBatchProjectionSync() {
+  if (workspaceSurface.value !== "batch-edit") return;
+  if (batchProjectionSyncTimer) clearTimeout(batchProjectionSyncTimer);
+  batchProjectionSyncTimer = setTimeout(() => {
+    batchProjectionSyncTimer = undefined;
+    void flushBatchProjectionSync().catch(() => undefined);
+  }, 80);
+}
+
 function installDesignerDirtyTracking() {
   const designer = designerRef.value;
   if (!designer) return () => undefined;
-  const events = ["input", "change", "pointerup", "keyup", "click", "drop"];
-  const handleInteraction = () => queueMicrotask(refreshTemplateDirtyState);
-  events.forEach((eventName) => designer.addEventListener(eventName, handleInteraction));
-  return () => events.forEach((eventName) => designer.removeEventListener(eventName, handleInteraction));
+  const liveEvents = ["input", "keyup"];
+  const committedEvents = ["change", "focusout", "pointerup", "click", "drop"];
+  const handleLiveInteraction = () => queueMicrotask(refreshTemplateDirtyState);
+  const handleCommittedInteraction = () => setTimeout(() => {
+    refreshTemplateDirtyState();
+    scheduleBatchProjectionSync();
+  }, 0);
+  liveEvents.forEach((eventName) => designer.addEventListener(eventName, handleLiveInteraction));
+  committedEvents.forEach((eventName) => designer.addEventListener(eventName, handleCommittedInteraction));
+  return () => {
+    liveEvents.forEach((eventName) => designer.removeEventListener(eventName, handleLiveInteraction));
+    committedEvents.forEach((eventName) => designer.removeEventListener(eventName, handleCommittedInteraction));
+  };
 }
 
 async function refreshPreview(): Promise<boolean> {
@@ -630,10 +772,17 @@ async function saveTemplate(options: { returnToPreview?: boolean; allowContextCh
   error.value = "";
   try {
     if (!options.allowContextChange) await assertCurrentContext(active, revision);
+    if (batchEditing) await flushBatchProjectionSync();
     const id = draftTemplateId.value ?? (selectedTemplateId.value === "automatic"
       ? crypto.randomUUID() : selectedTemplateId.value);
     if (!id) throw new Error("请先选择模板");
-    const persistentTemplate = getPersistentTemplateData(designerRef.value);
+    const editedTemplate = getPersistentTemplateData(designerRef.value);
+    const canonicalTemplate = draftTemplateId.value
+      ? editedTemplate
+      : storedTemplate.value?.template ?? editedTemplate;
+    const persistentTemplate = batchEditing
+      ? mergeEditedBatchLayout(canonicalTemplate, editedTemplate, currentBatchLayout.value)
+      : mergeEditedBaseTemplate(canonicalTemplate, editedTemplate);
     const persist = async () => {
       const updated = await templateRepository.upsert(
         { baseId: active.baseId, tableId: active.tableId },
@@ -669,6 +818,7 @@ async function saveTemplate(options: { returnToPreview?: boolean; allowContextCh
     storedTemplate.value = saved;
     templateFallback.value = false;
     templateDirty.value = false;
+    templateCreateError.value = "";
     captureTemplateBaseline();
     status.value = "模板已保存（未写入当前记录值）";
     if (batchEditing && renderFailure) {
@@ -699,48 +849,267 @@ async function saveTemplate(options: { returnToPreview?: boolean; allowContextCh
   }
 }
 
-type NewTemplateKind = "default" | "continuous" | "labels";
-
 function templateLayoutLabel(template: unknown) {
-  if (hasNativeLabelGrid(template)) return "标签排版";
-  if (hasContinuousLayout(template)) return "连续排版";
-  return "默认排版";
+  const mode = getBatchLayoutMode(template);
+  return BATCH_LAYOUT_OPTIONS.find((option) => option.kind === mode)?.label ?? "默认排版";
 }
 
-async function createTemplate(kind: NewTemplateKind = "default") {
-  if (isBatchMode.value || !designerRef.value || !printJob.value || !templateLoaded.value) return;
+async function createTemplate(
+  kind: TemplateCreateKind = "automatic",
+) {
+  if (workspaceMode.value !== "preview" || !designerRef.value || !printJob.value
+      || !selection.value || !templateLoaded.value || busy.value) return;
   closeTransientMenus();
+  const designer = designerRef.value;
+  const previousJob = printJob.value;
+  let job = previousJob;
+  const active = selection.value;
+  const revision = contextRevision;
+  const draftId = crypto.randomUUID();
+  const exitsOwnedBatch = shouldExitBatchOnTemplateSwitch(batchSession.value, draftId);
+  lastTemplateCreateKind.value = kind;
   busy.value = true;
   error.value = "";
+  templateCreateError.value = "";
   try {
-    const initialTemplate = kind === "labels"
-      ? generateLabelTemplate(printJob.value)
-      : kind === "continuous" ? generateContinuousTemplate(printJob.value) : null;
-    await bindPrintJob(designerRef.value, initialTemplate, printJob.value);
+    if (exitsOwnedBatch) {
+      const currentIds = getCurrentRecordIds(active);
+      if (!currentIds.length) throw new Error("当前宿主记录不可用；原批次已保留");
+      job = await loadPrintJob(active, currentIds);
+      await assertCurrentContext(active, revision);
+    }
+    const initialTemplate = kind === "blank"
+      ? generateBlankTemplate(job)
+      : generateTemplate(job);
+    const previousTemplate = getPersistentTemplateData(designer);
+    const candidate = await prepareTemplateCandidate({
+      template: initialTemplate,
+      load: async (candidate) => {
+        await bindPrintJob(designer, candidate, job);
+        await assertCurrentContext(active, revision);
+      },
+      render: async () => {
+        const rendered = await renderPrintJobPages(
+          designer,
+          job,
+          undefined,
+          () => revision === contextRevision,
+        );
+        await assertCurrentContext(active, revision);
+        return rendered;
+      },
+      restore: async () => {
+        if (revision !== contextRevision) return;
+        await bindPrintJob(designer, previousTemplate, previousJob);
+      },
+    });
+    if (exitsOwnedBatch) {
+      printJob.value = job;
+      batchSession.value = createSinglePrintSession(active.recordId);
+      renderedPages.value = candidate.rendered;
+      previewHtml.value = composeRenderedPrintPages(candidate.rendered);
+      batchPreviewStale.value = false;
+    }
     draftOriginId.value = selectedTemplateId.value;
-    draftTemplateId.value = crypto.randomUUID();
-    const prefix = kind === "labels" ? "标签模板" : kind === "continuous" ? "连续模板" : "新模板";
+    draftTemplateId.value = draftId;
+    const prefix = kind === "blank" ? "空白模板" : "自动模板";
     draftTemplateName.value = `${prefix} ${templateCollection.value.templates.length + 1}`;
     selectedTemplateId.value = draftTemplateId.value;
     templateDirty.value = true;
-    renderedPages.value = null;
-    previewHtml.value = "";
+    captureTemplateBaseline();
     workspaceMode.value = "edit";
     activeEditorPanel.value = "data-sources";
-    status.value = kind === "labels" ? "已创建未保存标签模板草稿"
-      : kind === "continuous" ? "已创建未保存连续模板草稿" : "已创建未保存模板草稿";
+    const createdStatus = kind === "blank" ? "已创建未保存空白模板草稿" : "已创建未保存自动模板草稿";
+    status.value = exitsOwnedBatch ? `已退出原模板批量；${createdStatus}` : createdStatus;
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : "新模板创建失败";
+    const message = cause instanceof Error ? cause.message : "新模板创建失败";
+    error.value = message;
+    templateCreateError.value = message;
     status.value = "新模板创建失败";
   } finally {
     busy.value = false;
   }
 }
 
-async function selectTemplate(id: string) {
-  if (isBatchMode.value || !templateLoaded.value || selectedTemplateId.value === id || !selection.value) return;
+async function changeBatchLayout(mode: BatchLayoutMode) {
+  if (!isBatchMode.value || !designerRef.value || !printJob.value || !selection.value) return;
+  if (!storedTemplate.value || selectedTemplateId.value === "automatic" || draftTemplateId.value) {
+    status.value = "请先保存当前模板，再设置批量排版";
+    return;
+  }
+  if (mode === currentBatchLayout.value) return;
+  if (busy.value) return;
+  if (workspaceMode.value === "edit" && refreshTemplateDirtyState()) {
+    status.value = "请先保存当前模板修改，再切换批量排版";
+    return;
+  }
+
+  const designer = designerRef.value;
+  const job = printJob.value;
+  const active = selection.value;
+  const revision = contextRevision;
+  const previous = storedTemplate.value;
+  const previousMode = getBatchLayoutMode(previous.template);
+  const previousLayout = ensureBatchLayout(
+    previous.template,
+    previousMode,
+    () => generateLabelTemplate(job),
+    () => generateTemplate(job),
+  );
+  const candidate = ensureBatchLayout(
+    previous.template,
+    mode,
+    () => generateLabelTemplate(job),
+    () => generateTemplate(job),
+  );
+  const wasEditing = workspaceMode.value === "edit";
+  busy.value = true;
+  error.value = "";
+  try {
+    const committed = await commitBatchLayoutChange({
+      applyCandidate: () => bindPrintJob(designer, candidate.effectiveTemplate, job),
+      renderCandidate: async () => {
+        const rendered = await renderPrintJobPages(
+          designer,
+          job,
+          undefined,
+          () => revision === contextRevision,
+        );
+        await assertCurrentContext(active, revision);
+        return rendered;
+      },
+      prepareEditableProjection: wasEditing
+        ? () => bindBatchEditProjection(designer, candidate.effectiveTemplate, job, mode)
+        : undefined,
+      persistCandidate: () => templateRepository.upsert(
+        { baseId: active.baseId, tableId: active.tableId },
+        candidate.persistentTemplate,
+        {
+          id: previous.id,
+          name: previous.name,
+          expectedRevision: templateCollection.value.revision,
+        },
+      ),
+      restoreCommitted: async () => {
+        if (revision !== contextRevision) return;
+        await bindPrintJob(designer, previousLayout.effectiveTemplate, job);
+        if (wasEditing) {
+          await bindBatchEditProjection(designer, previousLayout.effectiveTemplate, job, previousMode);
+        }
+      },
+    });
+    await assertCurrentContext(active, revision);
+    const updated = committed.saved;
+    const saved = updated.templates.find((item) => item.id === previous.id);
+    if (!saved) throw new Error("批量排版已保存但模板目录未返回当前模板");
+    templateCollection.value = updated;
+    storedTemplate.value = saved;
+    templateChecksum.value = saved.checksum;
+    renderedPages.value = committed.rendered;
+    previewHtml.value = composeRenderedPrintPages(committed.rendered);
+    previewError.value = "";
+    batchPreviewStale.value = false;
+    if (wasEditing) {
+      captureTemplateBaseline();
+      templateDirty.value = false;
+    }
+    status.value = `已将当前模板切换为${BATCH_LAYOUT_OPTIONS.find((item) => item.kind === mode)?.label}`;
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : "批量排版切换失败";
+    status.value = "排版未切换，原模板和批量预览已保留";
+  } finally {
+    if (revision === contextRevision) busy.value = false;
+  }
+}
+
+async function selectTemplate(id: string): Promise<boolean> {
+  if (workspaceMode.value !== "preview" || !templateLoaded.value
+    || !selection.value || !designerRef.value
+    || !printJob.value || busy.value) return false;
   closeTransientMenus();
-  await loadTemplateAndPreview(printJob.value, selection.value, contextRevision, id);
+  const designer = designerRef.value;
+  const previousJob = printJob.value;
+  let job = previousJob;
+  const active = selection.value;
+  const revision = contextRevision;
+  const target = id === "automatic"
+    ? null
+    : templateCollection.value.templates.find((item) => item.id === id) ?? null;
+  busy.value = true;
+  error.value = "";
+  previewError.value = "";
+  templateCreateError.value = "";
+  try {
+    if (id !== "automatic" && !target) throw new Error("所选模板已不存在，请重新加载");
+    const exitsOwnedBatch = shouldExitBatchOnTemplateSwitch(batchSession.value, id);
+    if (exitsOwnedBatch) {
+      const currentIds = getCurrentRecordIds(active);
+      if (!currentIds.length) throw new Error("当前宿主记录不可用；原批次已保留");
+      job = await loadPrintJob(active, currentIds);
+      await assertCurrentContext(active, revision);
+    }
+    const previousTemplate = getPersistentTemplateData(designer);
+    const canonicalTemplate = target?.template ?? generateTemplate(job);
+    const selectedMode = isBatchMode.value && !exitsOwnedBatch
+      ? getBatchLayoutMode(canonicalTemplate) : "default";
+    const explicitTemplate = ensureBatchLayout(
+      canonicalTemplate,
+      selectedMode,
+      () => generateLabelTemplate(job),
+      () => generateTemplate(job),
+    ).effectiveTemplate;
+    const candidate = await prepareTemplateCandidate({
+      template: explicitTemplate,
+      load: async (template) => {
+        await bindPrintJob(designer, template, job);
+        await assertCurrentContext(active, revision);
+      },
+      render: async () => {
+        const rendered = await renderPrintJobPages(
+          designer,
+          job,
+          undefined,
+          () => revision === contextRevision,
+        );
+        await assertCurrentContext(active, revision);
+        return rendered;
+      },
+      restore: async () => {
+        if (revision !== contextRevision) return;
+        await bindPrintJob(designer, previousTemplate, previousJob);
+      },
+    });
+    printJob.value = job;
+    if (exitsOwnedBatch) batchSession.value = createSinglePrintSession(active.recordId);
+    storedTemplate.value = target;
+    selectedTemplateId.value = id;
+    draftTemplateId.value = null;
+    draftTemplateName.value = "";
+    draftOriginId.value = null;
+    templateFallback.value = false;
+    templateChecksum.value = target?.checksum ?? null;
+    templateSaveAllowed.value = true;
+    templateDirty.value = false;
+    captureTemplateBaseline();
+    templateWarning.value = "";
+    renderedPages.value = candidate.rendered;
+    previewHtml.value = composeRenderedPrintPages(candidate.rendered);
+    batchPreviewStale.value = false;
+    status.value = isBatchMode.value
+      ? `已保留 ${batchSession.value.committedRecordIds.length} 条记录并切换模板`
+      : exitsOwnedBatch
+        ? "已退出原模板批量并切换到当前记录预览"
+        : "已切换模板并刷新当前记录预览";
+    return true;
+  } catch (cause) {
+    if (revision === contextRevision) {
+      error.value = cause instanceof Error ? cause.message : "模板切换失败";
+      status.value = "模板未切换，原预览已保留";
+    }
+    return false;
+  } finally {
+    if (revision === contextRevision) busy.value = false;
+  }
 }
 
 async function updateDirectory(
@@ -748,10 +1117,11 @@ async function updateDirectory(
   item: StoredTemplate,
   renameTo?: string,
 ): Promise<boolean> {
-  if (isBatchMode.value || !selection.value || busy.value) return false;
+  if (workspaceMode.value !== "preview" || !selection.value || busy.value) return false;
   closeTransientMenus();
   const active = selection.value;
   const revision = contextRevision;
+  let nextSelection: string | null = null;
   busy.value = true;
   error.value = "";
   try {
@@ -767,9 +1137,8 @@ async function updateDirectory(
     templateCollection.value = updated;
     status.value = action === "rename" ? "模板已重命名" : action === "remove" ? "模板已删除" : "默认模板已更新";
     if (action === "remove" && selectedTemplateId.value === item.id) {
-      await loadTemplateAndPreview(printJob.value, active, revision, updated.defaultId);
+      nextSelection = updated.defaultId ?? "automatic";
     }
-    return true;
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : "模板目录操作失败";
     status.value = "模板目录未更新";
@@ -777,6 +1146,8 @@ async function updateDirectory(
   } finally {
     busy.value = false;
   }
+  if (nextSelection) return selectTemplate(nextSelection);
+  return true;
 }
 
 async function requestDirectoryAction(action: "rename" | "remove" | "default", item: StoredTemplate) {
@@ -800,6 +1171,17 @@ async function requestDirectoryAction(action: "rename" | "remove" | "default", i
     await nextTick();
     templateManagementCancelRef.value?.focus();
   }
+}
+
+function requestTemplateSelection(id: string) {
+  if (selectedTemplateId.value === id) return;
+  if (shouldGuardUnsavedNavigation(refreshTemplateDirtyState())) {
+    pendingPreviewTemplateId.value = id;
+    decisionDialog.value = "leave";
+    status.value = "切换模板前，请先处理未保存的模板修改";
+    return;
+  }
+  void selectTemplate(id);
 }
 
 function closeTemplateManagementDialog() {
@@ -842,7 +1224,7 @@ async function confirmTemplateManagement() {
   if (completed) closeTemplateManagementDialog();
 }
 
-function enterEditMode() {
+async function enterEditMode() {
   if (isBatchMode.value && !renderedPages.value) {
     status.value = "请先等待批量预览生成完成";
     return;
@@ -855,19 +1237,44 @@ function enterEditMode() {
     return;
   }
   closeTransientMenus();
-  workspaceMode.value = "edit";
-  if (!isBatchMode.value) {
-    renderedPages.value = null;
-    previewHtml.value = "";
+  const designer = designerRef.value;
+  const job = printJob.value;
+  const active = selection.value;
+  const revision = contextRevision;
+  if (!designer || !job) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    const persistentTemplate = getPersistentTemplateData(designer);
+    if (isBatchMode.value) {
+      await bindBatchEditProjection(designer, persistentTemplate, job, renderedLayout.value);
+    } else {
+      await bindPrintJob(designer, persistentTemplate, job);
+    }
+    if (active) await assertCurrentContext(active, revision);
+    workspaceMode.value = "edit";
+    activeEditorPanel.value = "data-sources";
+    captureTemplateBaseline();
+    status.value = isBatchMode.value
+      ? `已加载全部 ${job.documents.length} 条记录，可滚动编辑；修改同步到全部记录`
+      : "已进入编辑模式";
+  } catch (cause) {
+    try {
+      await bindPrintJob(designer, getPersistentTemplateData(designer), job);
+    } catch {
+      // The committed preview remains visible even if the hidden designer cannot be restored.
+    }
+    error.value = cause instanceof Error ? cause.message : "模板编辑画布加载失败";
+    status.value = "仍保留当前打印预览";
+  } finally {
+    if (revision === contextRevision) busy.value = false;
   }
-  activeEditorPanel.value = "data-sources";
-  status.value = "已进入编辑模式";
 }
 
 async function applyPreviewMode(): Promise<boolean> {
   const refreshed = await refreshPreview();
   if (refreshed && workspaceMode.value === "edit") {
-    workspaceMode.value = toggleWorkspaceMode(workspaceMode.value);
+    workspaceMode.value = "preview";
   }
   return refreshed;
 }
@@ -880,12 +1287,26 @@ async function restoreBatchEditBaseline(): Promise<boolean> {
   error.value = "";
   let baselineRestored = false;
   try {
+    const storedEffective = storedTemplate.value
+      ? ensureBatchLayout(
+        storedTemplate.value.template,
+        getBatchLayoutMode(storedTemplate.value.template),
+        () => generateLabelTemplate(printJob.value!),
+        () => generateTemplate(printJob.value!),
+      ).effectiveTemplate
+      : undefined;
     const warning = await bindStoredTemplateOrFallback(
       designerRef.value,
-      storedTemplate.value?.template,
+      storedEffective,
       printJob.value,
     );
     if (warning) throw new Error(warning);
+    if (draftTemplateId.value) {
+      selectedTemplateId.value = draftOriginId.value ?? "automatic";
+      draftTemplateId.value = null;
+      draftTemplateName.value = "";
+      draftOriginId.value = null;
+    }
     templateDirty.value = false;
     captureTemplateBaseline();
     baselineRestored = true;
@@ -1008,6 +1429,7 @@ async function resolveDecision(decision: "save" | "discard" | "cancel") {
       }
       pendingContext.value = null;
       pendingLoadRequest.value = null;
+      pendingPreviewTemplateId.value = null;
     }
     return;
   }
@@ -1035,6 +1457,8 @@ async function resolveDecision(decision: "save" | "discard" | "cancel") {
     }
     return;
   }
+  const requestedTemplateId = pendingPreviewTemplateId.value;
+  pendingPreviewTemplateId.value = null;
   if (decision === "save") {
     const saved = await saveTemplate();
     if (!saved) return;
@@ -1045,7 +1469,10 @@ async function resolveDecision(decision: "save" | "discard" | "cancel") {
         draftOriginId.value ?? (selectedTemplateId.value === "automatic" ? null : selectedTemplateId.value));
     if (!loaded) return;
   }
-  if (action === "leave" && workspaceMode.value === "edit") await applyPreviewMode();
+  if (action === "leave" && requestedTemplateId) {
+    workspaceMode.value = "preview";
+    await selectTemplate(requestedTemplateId);
+  } else if (action === "leave" && workspaceMode.value === "edit") await applyPreviewMode();
   else if (action === "reload" && decision === "save") {
     await loadTemplateAndPreview(printJob.value, selection.value, contextRevision, selectedTemplateId.value);
   }
@@ -1092,15 +1519,7 @@ async function copyDataSource(source: { id: string; label: string }) {
   }
 }
 
-const components = [
-  { type: "text", label: "文本" },
-  { type: "table", label: "表格" },
-  { type: "image", label: "图片" },
-  { type: "line", label: "横线" },
-  { type: "rect", label: "矩形" },
-] as const;
-
-function startComponentDrag(type: string, event: DragEvent) {
+function startComponentDrag(type: DesignerComponentType, event: DragEvent) {
   if (!event.dataTransfer) return;
   event.dataTransfer.effectAllowed = "copy";
   event.dataTransfer.setData("application/json", JSON.stringify({ type }));
@@ -1209,6 +1628,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", handleGlobalPointerDown);
   document.removeEventListener("keydown", handleGlobalKeydown);
   if (statusToastTimer) clearTimeout(statusToastTimer);
+  if (batchProjectionSyncTimer) clearTimeout(batchProjectionSyncTimer);
   stopSelectionWatch?.();
   stopDataSourceTerminology?.();
   stopDataSourceEditingLifecycle?.();
@@ -1222,61 +1642,10 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="app-shell" :class="`surface-${workspaceSurface}`">
-    <header v-if="presentation.showBrand" class="app-header">
+    <header class="app-header">
       <div class="brand-block" aria-label="多维打印">
         <span class="brand-mark" aria-hidden="true">印</span>
         <h1>多维打印</h1>
-      </div>
-      <div class="header-context">
-        <span>{{ printJob?.table.name || "正在读取数据表" }}</span>
-        <span class="context-divider" aria-hidden="true">/</span>
-        <span>{{ currentRecordLabel }}</span>
-      </div>
-      <div class="header-actions">
-        <template v-if="workspaceSurface === 'batch-edit'">
-          <button class="button button-tertiary" :disabled="busy" @click="requestPreviewMode">
-            <span aria-hidden="true">←</span> 返回批量预览
-          </button>
-          <button v-if="presentation.showSave" class="button button-primary"
-            :disabled="busy || !templateSaveAllowed" @click="saveTemplate()">保存模板</button>
-        </template>
-        <template v-else>
-        <button v-if="presentation.showRecordPicker" class="button button-secondary button-record-picker"
-          :disabled="busy || !templateLoaded" @click="requestLoadRecords(true)">
-          {{ batchWorkspaceActions.selectLabel }}
-        </button>
-        <button v-if="presentation.showExitBatch" class="button button-tertiary" :disabled="busy"
-          @click="requestExitBatch">退出批量</button>
-        <button v-if="presentation.showOutputs" :disabled="batchWorkspaceActions.outputDisabled"
-          class="button button-secondary" @click="exportPdf">
-          {{ batchWorkspaceActions.exportPdfLabel }}
-        </button>
-        <button v-if="presentation.showOutputs" class="button button-primary" :disabled="batchWorkspaceActions.outputDisabled" @click="printOutput">
-          {{ batchWorkspaceActions.printLabel }}
-        </button>
-        </template>
-      </div>
-    </header>
-
-    <header v-else class="app-header app-header-edit">
-      <button class="button button-tertiary back-button" :disabled="busy" @click="requestPreviewMode">
-        <span aria-hidden="true">←</span> 返回预览
-      </button>
-      <div class="edit-header-context">
-        <strong>{{ currentTemplateName }}</strong>
-        <span class="status-chip" :class="`status-${templateStatus}`">{{ templateStatusLabel }}</span>
-      </div>
-      <div class="header-actions">
-        <div class="menu-anchor edit-more-anchor">
-          <button class="button button-tertiary" type="button" aria-haspopup="menu"
-            :aria-expanded="editMoreMenuOpen" @click="toggleEditMoreMenu">更多</button>
-          <div v-if="editMoreMenuOpen" class="action-menu action-menu-right" role="menu">
-            <button class="action-menu-item" role="menuitem" :disabled="busy || !designerReady || !printJob"
-              @click="requestTemplateReload">重新加载模板</button>
-          </div>
-        </div>
-        <button v-if="presentation.showSave" class="button button-primary"
-          :disabled="busy || !templateSaveAllowed" @click="saveTemplate()">保存模板</button>
       </div>
     </header>
 
@@ -1288,32 +1657,11 @@ onBeforeUnmount(() => {
       <span v-if="previewError">预览：{{ previewError }}</span>
       <span v-if="error">{{ error }}</span>
       <button v-if="showBatchRetry" class="status-retry-button" type="button"
-        @click="requestLoadRecords(true)">重试批量读取</button>
+        @click="retryBatchCandidate">重试批量读取</button>
     </div>
 
     <section class="workspace" :class="`workspace-${workspaceMode}`">
-      <aside class="sidebar" :aria-label="presentation.showBatchSummary ? '批量打印目录' : presentation.showTemplateDirectory ? '模板目录' : '编辑操作区'">
-        <section v-if="presentation.showBatchSummary" class="sidebar-section batch-preview-sidebar">
-          <div class="sidebar-title-row">
-            <span class="sidebar-title">本次打印</span>
-            <span v-if="workspaceSurface === 'batch-preview'" class="readonly-tag">预览</span>
-            <span v-else class="readonly-tag readonly-tag-editing">编辑中</span>
-          </div>
-          <div class="batch-count"><strong>{{ batchSession.committedRecordIds.length }}</strong><span>条记录</span></div>
-          <dl class="batch-metadata">
-            <div><dt>模板</dt><dd>{{ currentTemplateName }}</dd></div>
-            <div><dt>排版</dt><dd>{{ renderedLayoutLabel }}</dd></div>
-          </dl>
-          <ul class="batch-record-list" aria-label="已选择记录">
-            <li v-for="summary in batchWorkspaceActions.summaries.slice(0, 5)" :key="summary.recordId">
-              <span>{{ summary.label }}</span>
-            </li>
-          </ul>
-          <span v-if="batchWorkspaceActions.summaries.length > 5" class="batch-remainder">
-            另有 {{ batchWorkspaceActions.summaries.length - 5 }} 条记录
-          </span>
-        </section>
-
+      <aside class="sidebar" :aria-label="presentation.showTemplateDirectory ? '模板目录' : '编辑操作区'">
         <section v-if="presentation.showTemplateDirectory" class="sidebar-section template-section">
           <div class="sidebar-title-row">
             <span class="sidebar-title">模板</span>
@@ -1325,7 +1673,7 @@ onBeforeUnmount(() => {
               class="template-item"
               :class="{ 'template-item-active': selectedTemplateId === 'automatic' }"
               :disabled="!templateLoaded"
-              @click="selectTemplate('automatic')"
+              @click="requestTemplateSelection('automatic')"
             >
               <span class="template-item-copy">
                 <strong>自动模板</strong>
@@ -1335,7 +1683,7 @@ onBeforeUnmount(() => {
             <div v-for="item in templateCollection.templates" :key="item.id" class="template-directory-row"
               :class="{ 'template-directory-row-active': selectedTemplateId === item.id }">
               <button class="template-item" :class="{ 'template-item-active': selectedTemplateId === item.id }"
-                :disabled="busy" @click="selectTemplate(item.id)">
+                :disabled="busy" @click="requestTemplateSelection(item.id)">
                 <span class="template-item-copy">
                   <strong>{{ item.name }}</strong>
                   <small>
@@ -1367,15 +1715,14 @@ onBeforeUnmount(() => {
               <span aria-hidden="true">＋</span> 新建模板
             </button>
             <div v-if="newTemplateMenuOpen" class="action-menu template-create-menu" role="menu">
-              <button class="action-menu-item" role="menuitem" @click="createTemplate('default')">
-                <span><strong>默认模板</strong><small>每条记录从新页开始</small></span>
+              <button v-for="option in TEMPLATE_CREATION_OPTIONS" :key="option.kind"
+                class="action-menu-item" role="menuitem" @click="createTemplate(option.kind)">
+                <span><strong>{{ option.label }}</strong><small>{{ option.description }}</small></span>
               </button>
-              <button class="action-menu-item" role="menuitem" @click="createTemplate('continuous')">
-                <span><strong>连续模板</strong><small>多条记录纵向连续排版</small></span>
-              </button>
-              <button class="action-menu-item" role="menuitem" @click="createTemplate('labels')">
-                <span><strong>标签模板</strong><small>按行列网格排列标签</small></span>
-              </button>
+            </div>
+            <div v-if="templateCreateError" class="template-create-error" role="alert">
+              <span>{{ templateCreateError }}</span>
+              <button type="button" :disabled="busy" @click="createTemplate(lastTemplateCreateKind)">重试创建</button>
             </div>
           </div>
         </section>
@@ -1406,12 +1753,20 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <div v-if="activeEditorPanel === 'components'" class="sidebar-section editor-content">
-            <p class="component-hint">拖动组件到右侧画布</p>
-            <button v-for="component in components" :key="component.type" class="data-source-row component-row"
-              draggable="true" @dragstart="startComponentDrag(component.type, $event)">
-              <span class="source-main"><span class="source-symbol component-symbol" aria-hidden="true">{{ component.label.slice(0, 1) }}</span><span>{{ component.label }}</span></span>
-              <small>拖入画布</small>
-            </button>
+            <p class="component-hint">拖动组件到右侧画布；选中画布中的组件后，可在右侧属性面板进行设置。</p>
+            <section v-for="group in DESIGNER_COMPONENT_GROUPS" :key="group.id" class="component-group">
+              <strong class="editor-group-title">{{ group.label }}</strong>
+              <button v-for="component in group.items" :key="component.type"
+                class="data-source-row component-row" type="button" draggable="true"
+                :aria-label="`拖动${component.label}组件到画布`"
+                @dragstart="startComponentDrag(component.type, $event)">
+                <span class="source-main">
+                  <span class="source-symbol component-symbol" aria-hidden="true">{{ component.symbol }}</span>
+                  <span class="component-copy"><span>{{ component.label }}</span><small>{{ component.description }}</small></span>
+                </span>
+                <small>拖入</small>
+              </button>
+            </section>
           </div>
         </template>
       </aside>
@@ -1419,55 +1774,57 @@ onBeforeUnmount(() => {
       <section class="workspace-main">
         <header v-if="presentation.showWorkspaceToolbar" class="workspace-toolbar">
           <div class="workspace-heading">
-            <h2>{{ workspaceSurface === 'batch-preview' ? '批量打印预览'
-              : workspaceSurface === 'batch-edit' ? `编辑${currentTemplateName}` : currentTemplateName }}</h2>
-            <span>{{ workspaceSurface === 'batch-preview'
-              ? `${batchSession.committedRecordIds.length} 条记录 · ${renderedPages?.pages.length ?? 0} 页`
-              : workspaceSurface === 'batch-edit'
-                ? `保存后重新生成 ${batchSession.committedRecordIds.length} 条记录`
-                : `${templateLayoutLabel(storedTemplate?.template)} · A4 纵向` }}</span>
+            <div class="workspace-title-line">
+              <h2>{{ currentTemplateName }}</h2>
+              <span v-if="workspaceMode === 'edit'" class="status-chip" :class="`status-${templateStatus}`">
+                {{ templateStatusLabel }}
+              </span>
+            </div>
+            <span v-if="workspaceMode === 'edit' && isBatchMode">
+              {{ printJob?.table.name || "正在读取数据表" }} / 已选 {{ printJob?.documents.length ?? 0 }} 条 · 全部记录可滚动编辑 · 修改同步到全部记录
+            </span>
+            <span v-else>{{ printJob?.table.name || "正在读取数据表" }} / {{ currentRecordLabel }} ·
+              {{ workspaceMode === 'edit'
+                ? '模板编辑'
+                : `${renderedLayoutLabel} · ${renderedOutputPageCount(renderedPages)} 页` }}</span>
           </div>
           <div class="workspace-actions">
+            <div v-if="isBatchMode" class="batch-layout-switch" role="group" aria-label="批量排版">
+              <span>批量排版</span>
+              <button v-for="option in BATCH_LAYOUT_OPTIONS" :key="option.kind" type="button"
+                class="batch-layout-button" :class="{ 'batch-layout-button-active': option.kind === currentBatchLayout }"
+                :disabled="busy || option.kind === currentBatchLayout || !storedTemplate || selectedTemplateId === 'automatic'"
+                :title="option.description" @click="changeBatchLayout(option.kind)">
+                {{ option.label.replace('排版', '') }}
+              </button>
+            </div>
+            <button v-if="presentation.showBack" class="button button-tertiary back-button"
+              :disabled="busy" @click="requestPreviewMode">
+              <span aria-hidden="true">←</span> 返回{{ isBatchMode ? "批量预览" : "预览" }}
+            </button>
+            <button v-if="presentation.showRecordPicker" class="button button-secondary button-record-picker"
+              :disabled="busy || !templateLoaded" @click="requestLoadRecords(true)">
+              {{ batchWorkspaceActions.selectLabel }}
+            </button>
+            <button v-if="presentation.showExitBatch" class="button button-tertiary" :disabled="busy"
+              @click="requestExitBatch">退出批量</button>
+            <button v-if="presentation.showOutputs" class="button button-secondary"
+              :disabled="batchWorkspaceActions.outputDisabled" @click="exportPdf">
+              {{ batchWorkspaceActions.exportPdfLabel }}
+            </button>
+            <button v-if="presentation.showOutputs" class="button button-primary"
+              :disabled="batchWorkspaceActions.outputDisabled" @click="printOutput">
+              {{ batchWorkspaceActions.printLabel }}
+            </button>
             <button v-if="presentation.showEditTemplate" class="button button-secondary"
               :disabled="busy || !templateSelected || !templateSaveAllowed || (isBatchMode && !renderedPages)"
               @click="enterEditMode">编辑模板</button>
+            <button v-if="presentation.showSave" class="button button-primary"
+              :disabled="busy || !templateSaveAllowed" @click="saveTemplate()">保存模板</button>
           </div>
         </header>
 
         <div class="canvas-stage">
-          <section v-if="presentation.showInlineEditorPanel" class="batch-inline-editor-panel" aria-label="批量模板编辑操作区">
-            <nav class="editor-tabs" aria-label="编辑工具">
-              <button v-for="panel in EDITOR_PANELS" :key="panel" class="editor-tab"
-                :class="{ 'editor-tab-active': activeEditorPanel === panel }"
-                :aria-selected="activeEditorPanel === panel" @click="selectEditorPanel(panel)">
-                {{ editorPanelLabels[panel] }}
-              </button>
-            </nav>
-            <div v-if="activeEditorPanel === 'data-sources'" class="sidebar-section editor-content">
-              <strong class="editor-group-title">字段</strong>
-              <button v-for="field in fieldDataSources" :key="field.id" class="data-source-row" type="button"
-                :aria-label="`复制数据源 ${field.name}`"
-                @click="copyDataSource({ id: fieldDataSourceId(field.id), label: field.name })">
-                <span class="source-main"><span class="source-symbol" aria-hidden="true">字</span><span>{{ field.name }}</span></span>
-                <small>复制</small>
-              </button>
-              <span v-if="!fieldDataSources.length" class="empty-copy">当前表没有可用字段</span>
-              <strong class="editor-group-title editor-group-system">系统</strong>
-              <button class="data-source-row" type="button" aria-label="复制数据源 打印日期"
-                @click="copyDataSource({ id: SYSTEM_PRINT_DATE_ID, label: '打印日期' })">
-                <span class="source-main"><span class="source-symbol" aria-hidden="true">系</span><span>打印日期</span></span>
-                <small>复制</small>
-              </button>
-            </div>
-            <div v-if="activeEditorPanel === 'components'" class="sidebar-section editor-content">
-              <p class="component-hint">拖动组件到右侧画布</p>
-              <button v-for="component in components" :key="component.type" class="data-source-row component-row"
-                draggable="true" @dragstart="startComponentDrag(component.type, $event)">
-                <span class="source-main"><span class="source-symbol component-symbol" aria-hidden="true">{{ component.label.slice(0, 1) }}</span><span>{{ component.label }}</span></span>
-                <small>拖入画布</small>
-              </button>
-            </div>
-          </section>
           <div class="designer-host" :class="{ 'designer-host-preview': !presentation.showDesigner }"
             :aria-hidden="!presentation.showDesigner ? 'true' : 'false'"
             :inert="!presentation.showDesigner ? true : undefined">
@@ -1584,10 +1941,8 @@ onBeforeUnmount(() => {
 .app-header {
   position: relative;
   z-index: 15;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: 12px;
   min-width: 0;
   padding: 0 12px;
   border-bottom: 1px solid var(--ui-divider);
@@ -1596,13 +1951,13 @@ onBeforeUnmount(() => {
 .brand-block { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .brand-mark { width: 22px; height: 22px; display: grid; place-items: center; flex: 0 0 22px; border-radius: 5px; background: var(--ui-primary); color: #fff; font-size: 11px; font-weight: 700; }
 .brand-block h1 { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; white-space: nowrap; }
-.header-context { min-width: 0; display: flex; align-items: center; gap: 9px; overflow: hidden; color: var(--ui-text-secondary); font-size: 12px; white-space: nowrap; }
-.header-context > span { overflow: hidden; text-overflow: ellipsis; }
-.context-divider { flex: 0 0 auto; color: var(--ui-text-disabled); }
-.header-actions, .workspace-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; }
-.app-header-edit { grid-template-columns: auto minmax(0, 1fr) auto; }
-.edit-header-context { min-width: 0; display: flex; align-items: center; gap: 8px; }
-.edit-header-context strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }
+.workspace-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.batch-layout-switch { display: inline-flex; align-items: center; gap: 2px; min-height: 30px; padding: 2px; border: 1px solid var(--ui-divider); border-radius: 6px; background: var(--ui-surface-subtle); }
+.batch-layout-switch > span { padding: 0 6px; color: var(--ui-text-tertiary); font-size: 10px; white-space: nowrap; }
+.batch-layout-button { min-height: 24px; border: 0; border-radius: 4px; padding: 0 7px; background: transparent; color: var(--ui-text-secondary); font: inherit; font-size: 11px; cursor: pointer; }
+.batch-layout-button:hover:not(:disabled) { background: #fff; color: var(--ui-text); }
+.batch-layout-button-active:disabled { background: #fff; color: var(--ui-primary); box-shadow: 0 0 0 1px var(--ui-divider); }
+.batch-layout-button:disabled:not(.batch-layout-button-active) { cursor: not-allowed; color: var(--ui-text-disabled); }
 .button {
   min-height: 32px;
   border: 1px solid transparent;
@@ -1625,6 +1980,7 @@ onBeforeUnmount(() => {
 .template-more-button:focus-visible,
 .editor-tab:focus-visible,
 .data-source-row:focus-visible,
+.batch-layout-button:focus-visible,
 .action-menu-item:focus-visible { outline: 2px solid rgba(51, 112, 255, .42); outline-offset: 1px; }
 .button:disabled,
 .template-item:disabled,
@@ -1673,7 +2029,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   background: var(--ui-surface);
 }
-.workspace-edit { --workspace-sidebar-width: 208px; }
+.workspace-edit { --workspace-sidebar-width: 190px; }
 .sidebar { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--ui-divider); background: #fafbfc; }
 .sidebar-section { min-width: 0; padding: 12px 10px; }
 .sidebar-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; margin-bottom: 6px; }
@@ -1702,6 +2058,9 @@ onBeforeUnmount(() => {
 .template-more-button:hover { background: var(--ui-surface-subtle); }
 .template-create { position: relative; padding-top: 8px; border-top: 1px solid var(--ui-divider); }
 .button-new-template { width: 100%; }
+.template-create-error { display: grid; gap: 5px; margin-top: 7px; padding: 7px 8px; border-radius: 5px; background: #fff2f0; color: #8f2520; font-size: 11px; line-height: 16px; }
+.template-create-error button { width: fit-content; border: 0; padding: 0; background: transparent; color: var(--ui-primary); font: inherit; font-weight: 500; cursor: pointer; }
+.template-create-error button:disabled { color: var(--ui-text-disabled); cursor: not-allowed; }
 .action-menu { position: absolute; z-index: 25; min-width: 148px; padding: 5px; border: 1px solid var(--ui-divider); border-radius: 7px; background: #fff; box-shadow: 0 6px 18px rgba(31, 35, 41, .12); }
 .action-menu-right { top: 36px; right: 0; }
 .template-action-menu { top: 32px; right: -2px; }
@@ -1715,21 +2074,7 @@ onBeforeUnmount(() => {
 .action-menu-item strong { font-size: 13px; font-weight: 500; }
 .action-menu-item small { color: var(--ui-text-tertiary); font-size: 11px; }
 .action-menu-danger { margin-top: 4px; border-top: 1px solid var(--ui-divider); border-radius: 0 0 5px 5px; color: var(--ui-danger); }
-.edit-more-anchor { position: relative; }
-.batch-preview-sidebar { flex: 1; overflow: auto; padding: 10px 12px; }
-.readonly-tag-editing { background: #fff7e8; color: #9a5f08; }
-.batch-count { display: flex; align-items: baseline; gap: 5px; margin: 4px 0 12px; }
-.batch-count strong { font-size: 24px; line-height: 28px; font-weight: 600; }
-.batch-count span { color: var(--ui-text-secondary); font-size: 11px; }
-.batch-metadata { margin: 0; }
-.batch-metadata > div { min-width: 0; display: flex; justify-content: space-between; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--ui-divider); }
-.batch-metadata dt { color: var(--ui-text-tertiary); font-size: 11px; }
-.batch-metadata dd { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
-.batch-record-list { display: grid; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; }
-.batch-record-list li { min-height: 32px; display: flex; align-items: center; border-radius: 5px; padding: 0 8px; background: var(--ui-surface-subtle); font-size: 11px; }
-.batch-record-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.batch-remainder { display: block; margin-top: 7px; color: var(--ui-text-tertiary); font-size: 11px; }
-.editor-tabs { flex: 0 0 44px; display: flex; gap: 16px; padding: 0 10px; border-bottom: 1px solid var(--ui-divider); background: #fff; }
+.editor-tabs { flex: 0 0 44px; display: flex; gap: 10px; padding: 0 10px; border-bottom: 1px solid var(--ui-divider); background: #fff; }
 .editor-tab { position: relative; border: 0; padding: 0 1px; background: transparent; color: var(--ui-text-secondary); font: inherit; font-size: 13px; cursor: pointer; }
 .editor-tab-active { color: var(--ui-text); font-weight: 500; }
 .editor-tab-active::after { content: ""; position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: var(--ui-primary); }
@@ -1743,32 +2088,31 @@ onBeforeUnmount(() => {
 .source-symbol { width: 20px; height: 20px; display: grid; place-items: center; flex: 0 0 20px; border-radius: 4px; background: #edf3ff; color: #4569a8; font-size: 10px; }
 .component-symbol { background: #eef7f2; color: #397455; }
 .data-source-row small { flex: 0 0 auto; color: var(--ui-text-tertiary); font-size: 10px; }
-.data-source-row.component-row { cursor: grab; }
+.data-source-row.component-row { min-height: 42px; cursor: grab; }
 .data-source-row.component-row:active { cursor: grabbing; }
 .empty-copy, .component-hint { color: var(--ui-text-tertiary); font-size: 11px; }
-.component-hint { margin: 0 0 7px; }
+.component-hint { margin: 0 0 10px; line-height: 17px; }
+.component-group + .component-group { margin-top: 13px; }
+.component-copy { min-width: 0; display: grid; gap: 1px; overflow: visible; white-space: normal; }
+.component-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.component-copy > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-chip { display: inline-flex; width: fit-content; align-items: center; border: 1px solid var(--ui-border); border-radius: 4px; padding: 1px 5px; color: var(--ui-text-secondary); font-size: 10px; white-space: nowrap; }
 .status-saved { border-color: #c7e5cf; color: #28723d; }
 .status-unsaved { border-color: #f1d4a6; color: #9a5f08; }
 .status-fallback { border-color: #f2c4c1; color: #9a302a; }
 .workspace-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.workspace-toolbar { flex: 0 0 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--ui-divider); background: #fff; }
+.workspace-toolbar { flex: 0 0 auto; min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 12px 7px 16px; border-bottom: 1px solid var(--ui-divider); background: #fff; }
 .workspace-heading { min-width: 0; display: grid; gap: 1px; }
+.workspace-title-line { min-width: 0; display: flex; align-items: center; gap: 7px; }
 .workspace-heading h2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 600; }
 .workspace-heading span { color: var(--ui-text-tertiary); font-size: 10px; line-height: 14px; }
-.canvas-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--ui-workspace); }
-.surface-batch-edit .workspace { --workspace-sidebar-width: 188px; }
-.surface-batch-edit .canvas-stage { display: flex; }
-.batch-inline-editor-panel { flex: 0 0 176px; min-width: 0; display: flex; flex-direction: column; border-right: 1px solid var(--ui-divider); background: #fff; }
-.batch-inline-editor-panel .editor-tabs { flex: 0 0 44px; }
-.batch-inline-editor-panel .editor-content { min-height: 0; }
-.surface-batch-edit .designer-host { position: relative; inset: auto; flex: 1; min-width: 0; }
-.designer-host { position: absolute; z-index: 1; inset: 0; overflow: hidden; background: #fff; opacity: 1; }
+.canvas-stage { position: relative; flex: 1; height: 100%; min-height: 0; overflow: hidden; background: var(--ui-workspace); }
+.designer-host { position: absolute; z-index: 1; inset: 0; height: 100%; min-height: 0; overflow: hidden; background: #fff; opacity: 1; }
 .designer-host-preview { opacity: 0; pointer-events: none; }
-.designer-host print-designer { display: block; min-height: 100%; }
+.designer-host print-designer { display: block; width: 100%; height: 100%; min-height: 0; }
 .preview-surface { position: absolute; z-index: 2; inset: 0; overflow: auto; padding: 18px 16px 0; background: var(--ui-workspace); scrollbar-width: thin; }
 .preview-paper-wrap { min-height: 100%; display: flex; justify-content: center; align-items: flex-start; }
-.preview-frame { display: block; width: min(794px, 100%); min-height: 1040px; overflow: hidden; border: 0; background: #fff; box-shadow: 0 2px 8px rgba(31, 35, 41, .11); }
+.preview-frame { display: block; width: min(794px, 100%); min-height: 1040px; overflow: hidden; border: 0; background: transparent; box-shadow: none; }
 .preview-empty { min-height: 100%; display: grid; place-content: center; justify-items: center; gap: 7px; padding: 24px; color: var(--ui-text-tertiary); font-size: 12px; text-align: center; }
 .preview-empty strong { color: var(--ui-text-secondary); font-size: 14px; font-weight: 600; }
 .decision-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(31, 35, 41, .46); }
@@ -1783,12 +2127,11 @@ onBeforeUnmount(() => {
 .template-name-input:focus { border-color: var(--ui-primary); box-shadow: 0 0 0 2px rgba(51, 112, 255, .14); }
 @media (max-width: 760px) {
   .workspace { --workspace-sidebar-width: 164px; }
-  .workspace-edit { --workspace-sidebar-width: 188px; }
-  .surface-batch-edit .workspace { --workspace-sidebar-width: 164px; }
-  .batch-inline-editor-panel { flex-basis: 148px; }
-  .app-header { gap: 8px; padding: 0 9px; }
-  .header-context { display: none; }
-  .header-actions { gap: 4px; }
+  .workspace-edit { --workspace-sidebar-width: 156px; }
+  .app-header { padding: 0 9px; }
+  .workspace-toolbar { align-items: flex-start; padding: 6px 8px 6px 10px; }
+  .workspace-heading { padding-top: 2px; }
+  .workspace-actions { gap: 4px; }
   .button { padding: 0 8px; }
   .template-section { padding-right: 5px; padding-left: 5px; }
   .template-item { padding-left: 7px; }
@@ -1799,7 +2142,8 @@ onBeforeUnmount(() => {
   .app-shell { min-width: 320px; }
   .brand-block h1 { display: none; }
   .workspace, .workspace-edit { grid-template-columns: 148px minmax(0, 1fr); }
-  .header-actions .button { padding: 0 6px; font-size: 12px; }
+  .workspace-toolbar { flex-wrap: wrap; }
+  .workspace-actions .button { padding: 0 6px; font-size: 12px; }
   .workspace-toolbar { padding-right: 8px; padding-left: 10px; }
 }
 @media (prefers-reduced-motion: reduce) {

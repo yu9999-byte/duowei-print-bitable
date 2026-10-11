@@ -18,17 +18,21 @@
 | 模块 | 输入 | 输出 | 关键约束 |
 |-|-|-|-|
 | ContextAdapter | 记录视图 `getSelection`、批量 `selectRecordIdList` | baseId、tableId、viewId、宿主/批量 recordIds | 单条来源必须是宿主 recordId；不猜 ID。`getSelection` 属于 SDK 读取，15 秒未返回即失败；`selectRecordIdList` 属于人工选择器，不设置操作超时 |
-| BitableGateway | base/table/record IDs | SDK 可读字段、记录、关联元数据 | 最多 4 个主记录读取 worker；索引保留选择顺序；任一核心记录失败即停发后续任务，等待在途任务收尾再拒绝整批。字段级不可读仍按 SPEC-DATA-02 降级；关联 ID 完整读取或失败；每次主表、字段、记录及关联元数据读取都有 15 秒有界超时，超时作为候选失败而不是永久 pending；权限遵循当前用户，真实分页/限流待验证 |
+| BitableGateway | base/table/record IDs | SDK 可读字段、记录、关联元数据 | 最多 4 个主记录读取 worker；索引保留选择顺序；任一核心记录失败即停发后续任务，等待在途任务收尾再拒绝整批。字段级不可读仍按 SPEC-DATA-02 降级；按 SDK `property.multiple` 把关联分类为单值 `reference` 或多值 `detail`，前者读取可读文本，后者才展开关联 ID/目标表；每次主表、字段、记录及关联元数据读取都有 15 秒有界超时，超时作为候选失败而不是永久 pending；权限遵循当前用户，真实分页/限流待验证 |
 | ReadableFieldAdapter（网关内） | SDK 字段与 `getCellString` | 可打印文本或字段级诊断 | 不输出原始对象字符串，不存持久副本 |
 | PrintJobBuilder | 上下文、字段、记录 | 顺序稳定的 documents[] | 保留每条记录与关联行边界 |
-| BatchPrintSession | 宿主 recordId、已确认 recordIds 和摘要 | `single-ready` / `batch-ready`、数量和摘要 | 上限 50；候选 PrintJob 留在编排层，成功前不修改会话；不持久化业务值 |
+| BatchPrintSession | 宿主 recordId、当前模板 ID、已确认 recordIds 和摘要 | `single-ready` / `batch-ready`、模板归属、数量和摘要 | 上限 50；批量会话只属于发起模板，切换其他模板退出批量；候选 PrintJob 留在编排层，成功前不修改会话；不持久化业务值 |
+| BatchEditProjection | 一份公共模板、PrintJob、当前布局 | 默认全部页面、连续完整长画布或标签完整网格；元素到记录值的映射；可回收公共模板 | 只存在于 `batch-edit` 内存；不拥有批次或仓库存储；不得把业务值、记录 ID、实例副本或投影元数据写入模板 |
 | DataSourceCatalog | PrintJob 当前字段、插件系统值 | “字段/系统”数据源树与运行时值 | 字段不写死；旧模板不拥有当前数据源目录；系统 ID 使用插件命名空间；系统打印日期由任务 generatedAt 经 Date 本地年/月/日格式化，不截取 UTC 字符串、不另取当前时间；无效时刻拒绝解析，同名业务字段不被覆盖 |
 | DataSourceTokenCodec | 稳定字段/系统 ID、当前标签、当前记录值 | 持久 Token、编辑标签、失焦/输出值 | 三层表示可逆；不以字段名持久绑定，不把当前值写进模板，不向用户暴露内部 ID |
-| TemplateGenerator | 字段规格、纸张、引擎 schema | 默认、标签或固定高度连续模板 | 由真实引擎样本驱动，不手写伪 schema；连续模板显式标记布局类型 |
+| TemplateGenerator | 字段规格、纸张、引擎 schema | 空白/自动生成基础画布及标签兼容画布 | 由真实引擎样本驱动，不手写伪 schema；自动画布只铺排当前表字段，不自动放系统字段；创建方式与批量排版模式分离 |
 | ContinuousLayout | 固定高度连续模板、PrintJob | 原生单列长纸临时模板与数组变量 | 只接受可证明高度的单页普通字段模板；不拼接 DOM，不持久化业务值 |
-| TemplateRepository | base/table、版本化模板集合 | 多模板、唯一默认项或只读回退结果 | bridge 未设置键实测返回 `{}`，空普通对象按无值处理；v1 只读迁移；非空不可读模板不覆盖，回退会话禁用保存；保存前递归移除运行记录、记录 ID、设计器变量、表格样本和凭证形态字段，读取含禁存数据的旧信封时零写入拒绝；权限与冲突显式 |
-| DesignerAdapter | 模板、变量、任务 | canonical rendered pages、编辑、打印、已校验 PDF Blob | 直接调用安装版 Web Component；主预览与打印复用同一页对象；PDF 先校验文件头、页数和大小再提交下载，不造替代引擎 |
-| WorkspaceShell | PrintJob、模板集合、DesignerAdapter | `WorkspaceMode` 与 `WorkspaceSurface`、所选模板、统一编辑入口 | `getWorkspaceSurface(mode, batchMode)` 将工作台表面归一为 `single-preview`、`single-edit`、`batch-preview` 或 `batch-edit`；单条编辑隐藏模板目录，批量预览/编辑共享左侧批次目录并仅切换右侧模板区域；组件可拖入、数据源只可复制，右侧仍为真实 Web Component |
+| DesignerComponentCatalog | 锁定引擎标准组件类型 | 基础、数据与编码、形状三组共九个组件 | 只声明创建入口与拖拽 type，不复制属性 schema；`multiLabel` 只归标签布局 |
+| TemplateLayoutChoice | 当前模板、目标 `BatchLayoutMode`、基础/标签画布生成器 | 同一模板的持久表示与有效排版视图 | 切换不创建模板；历史标签根画布保留为标签变体，普通基础画布与各模板设置隔离 |
+| BatchLayoutTransaction | 候选绑定、渲染、全量编辑投影、仓库写入、旧画布恢复回调 | 已渲染页面与已保存模板集合 | 严格按候选→渲染→投影→保存执行；失败恢复旧画布，调用方成功返回前不提交预览/会话状态 |
+| TemplateRepository | base/table、版本化模板集合 | 多模板、唯一默认项或只读回退结果 | 飞书官方 `bridge.setData` 定义为“在当前 base 中存储自定义内容”，安装版 SDK 定义为按 key 读写持久化数据；仓库 key 不含成员 ID。bridge 未设置键实测返回 `{}`，空普通对象按无值处理；v1 只读迁移；非空不可读模板不覆盖，回退会话禁用保存；保存前递归移除运行记录、记录 ID、设计器变量、表格样本和凭证形态字段，读取含禁存数据的旧信封时零写入拒绝；权限与冲突显式。官方措辞支持 Base 作用域判断，但跨成员仍需正式双账号证据；用户已将该验证移出 Goal v15，不能写成已通过 |
+| DesignerAdapter | 模板、变量、任务 | canonical rendered pages、全量编辑投影、公共模板同步、组件拖拽、原生属性面板、打印、已校验 PDF Blob | 直接调用安装版 Web Component；每个投影元素绑定其记录运行值，提交交互后回收并重投影；只关闭重复元素库/结构面板，保留属性面板；输出从公共模板生成，主预览与打印复用同一页对象；屏幕预览以 screen-only 样式区分固定纸页和长纸，不污染打印/PDF；PDF 先校验文件头、页数和大小再提交下载，不造替代引擎 |
+| WorkspaceShell | PrintJob、模板集合、DesignerAdapter | `WorkspaceMode` 与 `WorkspaceSurface`、所选模板、数据源/组件操作区和当前模板批量排版 | 四种表面保持既有目录/编辑职责；批量编辑显示“已选 N 条、全部记录可滚动编辑”；批量会话绑定发起模板，预览切到其他模板时原子恢复目标模板的宿主当前记录；组件可拖入、数据源只可复制，默认/连续/标签只在批量工作区切换当前模板，右侧仍为真实 Web Component |
 
 组件拖拽继续采用锁定版 `vue-print-designer@1.7.39` 的 `application/json` `{type}` 契约，让引擎创建默认组件。数据源不再写入拖拽载荷；复制动作携带稳定字段/系统 ID 与当前标签，粘贴适配层把稳定绑定插入当前文本组件，同时只向用户显示 `@字段名`。关联数组仍由表格组件的专用配置处理。该适配随引擎版本升级复核；不得恢复“拖数据源创建元素”的旧路径。
 
@@ -44,7 +48,7 @@
 
 工作台状态由纯模型 `WorkspaceMode`、`TemplateStatus`、`TemplateSelection` 和 `EditorPanel` 表达，UI 只编排状态，不把状态判断散落在模板中：
 
-工作台内部模式与用户可见表面分开表达。`WorkspaceMode` 描述右侧模板区域的预览/编辑状态；`WorkspaceSurface` 由模式与批次会话共同得到四种表面。`single-preview` 显示模板目录，`single-edit` 显示全局数据源/组件操作区；`batch-preview` 和 `batch-edit` 均显示同一左侧批次目录，后者只在右侧嵌入数据源/组件操作面与真实设计器。批量候选成功仍原子提交为 `batch-ready + preview`，用户随后显式进入 `batch-edit`。
+工作台内部模式与用户可见表面分开表达。`WorkspaceMode` 描述预览/编辑状态；`WorkspaceSurface` 由模式与批次会话共同得到四种表面。`single-preview` 与 `batch-preview` 显示同一模板目录；`single-edit` 与 `batch-edit` 均隐藏目录，以统一“数据源/组件”侧栏和真实设计器占据工作区。批量排版属于右侧当前模板工作区，不形成第三个编辑面板或模板类型。批量候选成功仍原子提交为 `batch-ready + preview`；`batch-edit` 直接展开全部已选记录并由设计器内部滚动查看，不存在上一条/下一条或记录级导航。
 
 ```text
 loading → preview
@@ -56,7 +60,7 @@ edit-clean/edit-dirty ──返回预览──> preview（dirty 时先决策）
 任意状态 ──表/记录切换──> context-pending（dirty 时先决策）→ loading
 ```
 
-模板状态至少区分：自动模板、已保存模板、只读回退、未保存编辑。同表可存多个模板，集合恰有一个默认项；新建草稿不覆盖已有项，删除默认项须先设置替代项。预览模式外层目录是唯一模板事实源，编辑入口位于右侧当前模板区；编辑模式只显示左侧可操作的数据源/组件和右侧真实画布/属性。引擎内部模板列表、重复组件及保存入口隐藏，内置保存事件委托给同一仓库用例。旧模板与运行态数据分离，字段 ID 绑定兼容唯一可解析的旧名称。
+模板状态至少区分：自动模板、已保存模板、只读回退、未保存编辑。同表可存多个模板，集合恰有一个默认项；新建草稿不覆盖已有项，删除默认项须先设置替代项。预览模式外层目录是唯一模板事实源，编辑入口位于右侧当前模板区；编辑模式左侧只显示可操作的数据源和九种标准组件，右侧显示真实画布与原生属性面板。批量排版切换更新当前模板元数据，不生成新草稿。引擎内部模板列表、重复元素库、结构面板及保存入口隐藏，内置保存事件委托给同一仓库用例。
 
 核心模型与格式化纯函数不依赖飞书或 DOM。飞书与引擎 API 只在边界适配层出现。UI 仅编排状态：idle→loading→ready/degraded/error→printing/exporting；切换上下文时取消或忽略旧请求。选择批量的记录顺序在 PrintJob 中冻结，不能由并发网络响应决定。
 
@@ -76,6 +80,10 @@ batch-ready
 ```
 
 `batch-ready` 是已提交记录集合的不变量，而不是只读 UI 不变量：候选提交成功后先显示批次预览，但可在不改变 committed session 的前提下进入 `batch-edit`。保存模板后以当前 `PrintJob` 完整生成候选 canonical pages，成功才替换预览；失败保留草稿和旧页面。若选择动作从 `edit-dirty` 发起，仍先复用 `SPEC-UX-05` 的保存/放弃决策，决策完成前不启动批次读取。候选失败恢复原模式和原 committed session。
+
+Goal v13 的批量编辑投影只存在于当前设计器会话。`bindBatchEditProjection(designer, template, job, layout)` 以公共模板为基线，按布局复制可编辑实例，并用元素级记录映射及投影变量让每个实例显示自己的真实值。绑定完成后先归一化引擎从 Token 内容推断出的文本变量，避免首次用户修改与运行时推断一起被识别成冲突。输入和按键过程中只刷新脏状态；锁定版 Shadow DOM 文本框 `focusout` 直接进入批量同步，其他 `change/pointerup/click/drop` 提交后以短延迟调用 `synchronizeBatchEditProjection`，先回收被修改实例为公共模板，再重建全部实例。保存前强制 flush 同步并通过 `getPersistentTemplateData` 取得公共模板；该函数剥离投影元数据，仓库清洗继续阻止业务值和记录对象落库。若一次同步发现不同实例存在不同变更，操作失败并保留草稿，不静默选择覆盖。
+
+编辑态滚动所有权与预览不同：预览由 `.preview-surface` 滚动，编辑由 Web Component 内部 `.canvas-scroll` 滚动。外层 `.canvas-stage` 和 `.designer-host` 继续限制工作区边界，但必须具有 `height:100%`、`min-height:0`，`print-designer` 同样取得确定的 100% 高度；不得再用只有 `min-height` 的不完整链，也不得在宿主外套第二个可滚动容器。
 
 锁定版 `vue-print-designer@1.7.39` 的文本 textarea 把无 Shift 的 Enter 当作提交。Goal v9 的版本固定适配在 Shadow DOM 捕获阶段仅接管无修饰键 Enter：按当前选区插入 `\n`、更新选择位置并派发合成 `input`，阻止引擎同一次 keydown 提交；失焦仍走引擎 `commitInlineEdit` 和既有数据源同步。该适配必须以源码契约和事件测试锁定，升级引擎时优先删除适配并使用公开多行编辑能力。
 
@@ -154,9 +162,51 @@ Goal v7 只重构 `WorkspaceShell` 的界面结构、样式和展示状态，不
 
 1. `single-preview` 拥有模板目录、单一新建入口、当前模板编辑和单条输出；模板行管理动作通过同一菜单分发到既有仓库回调。
 2. `single-edit` 隐藏模板目录及打印/PDF，左侧在数据源与组件间切换，右侧挂载唯一真实设计器；返回和保存继续经过同一草稿守卫与持久化用例。
-3. `batch-preview` 拥有批次目录、当前模板编辑入口、重选/退出和批量输出；默认、标签、连续三种布局均从当前模板推导。
-4. `batch-edit` 保留同一左侧批次目录，右侧嵌入唯一数据源/组件操作面与真实设计器；只显示返回批量预览和唯一保存，不显示尚未重渲染的新模板输出动作。保存成功后以原记录顺序原子重建批次。
+3. `batch-preview` 保留模板目录；右侧当前模板工具栏拥有记录数量、重选/退出、当前模板编辑和批量输出。默认、标签、连续三种布局均从当前模板推导。
+4. `batch-edit` 隐藏模板目录，左侧显示唯一数据源/组件操作面，右侧挂载真实设计器；只显示返回批量预览和唯一保存，不显示模板切换或尚未重渲染的新模板输出动作。返回预览恢复原目录选择；保存成功后以原记录顺序原子重建批次。
+5. 新建模板使用 `prepareTemplateDraft(kind, job, designer)` 事务边界：显式生成默认/连续/标签模板对象，先在设计器完成加载、数据绑定和首屏渲染，再提交草稿状态。事务失败返回原工作台快照，不允许先清空预览再尝试创建。
+
+设计器和飞书宿主边界可能返回 JSON 兼容的响应式代理，不能直接假设所有模板/记录对象都满足浏览器 `structuredClone`。`cloneJsonValue` 作为统一复制边界：普通数据优先使用原生结构化克隆；仅在其拒绝代理时回退到 JSON 往返；两者都失败则显式终止，不能静默复用可变代理。模板绑定/快照、数据源刷新/输出准备、连续布局、打印任务和模板仓储均走该边界；回归门见 `CT-TPL-05` 与 BUG-0009。
 
 模板目录的重命名与删除属于 `WorkspaceShell` 展示交互，不新增核心状态或仓储用例：模板行菜单只负责打开产品内模态层，确认后仍调用既有 `TemplateRepository.rename/remove`。名称规范化位于 `src/components/template-management.ts`，仅去除首尾空格并拒绝空值；不修改 `src/core/**`。重命名弹层初始焦点进入并全选名称输入，删除弹层初始焦点停在取消；Tab 在弹层内循环，Esc、遮罩或取消关闭后将焦点归还原模板的更多按钮。仓储失败保留弹层与输入，避免用户丢失上下文。
 
 视觉 Token 以 CSS 自定义属性或现有样式层集中定义，禁止散落新的业务判断。根容器固定占满宿主高度；应用栏/工具栏不参与内容滚动，模板或编辑侧栏只滚动自己的列表，预览区成为纸张唯一纵向滚动容器。实现按 CT-UX-08/09/10/11 与设计器 Chrome 契约先 Red 后 Green；用户确认方案 B 后已完成本地候选，并在独立授权下以小组件 `1.0.37` / 应用 `1.0.34` 仅灰度到 `F225904757`。正式 E2E-UX-02 已通过；SPEC-UX-11 后续修正仍是本地候选，不改变后续发布需单独授权的边界。
+
+# 10. Goal v14 输出一致性设计
+
+浏览器打印文档只由 `composeBrowserPrintDocument(RenderedPrintJob)` 生成：先输出模板尺寸的 `@page`，再组合 `composeRenderedPrintPages` 的资源和显式页面。页面容器拥有固定宽高、溢出裁剪、页内禁止拆分、非末页强制分页和末页结束；第一层真实引擎纸张根节点占满页盒并移除设计器专用阴影。全局样式只保留打印根默认隐藏，不再复制分页算法。
+
+该设计保留三层职责：引擎负责模板布局和 PDF 渲染，`RenderedPrintJob` 负责页面事实，浏览器打印适配只负责把相同页面放进确定的物理页盒。`getPrintJobPdfBlob` 只把原有 PDF 生成从下载动作中拆出用于测试，不改变产品导出、模板、字段绑定、Goal v13 批量编辑或权限。决策见 ADR-0021。
+
+# 11. 原生组件属性与批量排版设计
+
+编辑侧栏的 `EDITOR_PANELS` 固定为 `data-sources / components`。`DesignerComponentCatalog` 声明九种引擎标准组件，App 只负责把 `{type}` 拖拽载荷交给真实设计器。组件落入画布后的属性不回流到外层表单；`installDesignerWorkspaceChrome` 保留引擎原生属性面板，只收起会造成第二套入口的元素库和结构面板。页面纸型与方向继续属于设计器现有能力，不再增加外层“页面设置”。
+
+ADR-0022 曾采用“新建另一排版草稿”，该段设计已被 ADR-0023 取代。现行排版切换是当前模板候选事务：App 生成同一模板的目标有效视图，完整渲染并在编辑态重建全部记录投影，再写回该模板的批量设置；全链成功才替换本地预览。模板 ID、目录数量和记录会话始终不变。
+# Goal v15：模板与批量排版状态设计
+
+Goal v15 以 ADR-0023 为准，将创建和排版拆成两个正交状态：`TemplateCreateKind(blank|automatic)` 只生成当前模板的初始画布，`BatchLayoutMode(default|continuous|labels)` 只控制当前模板在批量会话中的输出算法。UI 不再通过排版切换创建模板草稿。
+
+实现顺序遵循 TDD：先锁定两项创建入口、同模板模式切换、跨模板隔离、旧模板迁移与候选失败回滚；再引入独立领域模块；最后接入 App、真实设计器投影和仓库。历史标签根画布不会直接冒充默认画布：旧标签结构保存在 `duoweiBatchLayout.labelTemplate`，另建普通基础画布；返回标签仍恢复原内容。批量模式切换必须完整渲染候选后提交，任何异常都保留模板 ID、模板集合、记录会话和上一份可打印预览。两个仓库客户端连接同一 Base bridge 存储时必须读取同一集合，代码不得按成员派生 key；该客户端契约不能替代飞书正式双成员验收。用户于 2026-10-10 将正式双成员及权限边界移出 Goal v15，因此它们不再阻塞本 Goal，也不被标为已通过；未来若重新要求共享保证且正式结果证明 bridge 按成员隔离，再启用 ADR-0023 约定的最小服务端共享方案，不提前建设后端。
+
+# 12. Goal v16：关联明细完整读取与原生分页
+
+开发顺序严格为 Red→Green→Refactor：先为重复 ID、超时穿透、无视图、首视图前五列、双主记录明细隔离和长表格分页建立失败测试，再修改最小读取逻辑，最后用真实设计器浏览器夹具验证输出。领域层不得反向依赖 host；超时通过既有错误类型/错误名保持语义，其他记录级异常才包装为具体关联 ID 错误。
+
+数据流固定为 `SDK link value → LinkCellValue → ExpandedLinkedRecords → PrintJob document values → table variable → canonical rendered pages/PDF`。任何层不得另建一份只供预览或打印的明细模型。默认批量投影为每条主记录重写独立 table 变量，回收时剥离投影变量并只保存公共模板。候选任一步失败时不得提交半截 job、半截页或被截断的明细。
+
+# 13. Goal v18：模板级批量、字段生成和屏幕纸张边界
+
+批量候选提交时把 `selectedTemplateId` 写入内存态 `BatchPrintSession.templateId`。模板切换统一调用 `shouldExitBatchOnTemplateSwitch`；只有切回同一归属模板才可保留批次，其他模板必须先加载宿主当前记录并完成目标模板渲染，再原子提交单条会话。失败恢复使用原设计器模板和原 PrintJob，不允许目标模板与旧批次页面混合。
+
+关联分类只在 BitableGateway 发生一次，并随 `NormalizedField.linkKind` 向下游传播。正式 SDK 证明 `property.multiple` 不是单向自关联的充分判据：`FieldType.SingleLink` 且 `property.tableId === selection.tableId` 时优先分类为 `reference`，其余关联再以 `multiple === true` 分类为 `detail`。`reference` 不建立关联 reader、不生成 `arrayColumns`，DataSourceCatalog 不标记为数组，TemplateGenerator 将其作为普通字段；`detail` 沿用既有完整展开、空态和原生 table 分页。规则不读取字段名称。为兼容既有测试/旧内存结构，缺少 `linkKind` 且已有 `isLink/arrayColumns` 的字段继续按 detail 处理。
+
+首次正式版本 `1.0.48/1.0.45` 暴露上述真实 SDK 差异后，开发顺序仍保持 Red→Green：新增“单向自关联且 `multiple=true` 仍为 reference”的失败测试，确认实际得到 `detail`，再修改唯一分类函数 `getLinkKind`。最终全量 231/231，构建入口 `assets/main.bedfd72c.js`；业务 Base 与独立关联 Base E2E 通过后才接受本设计。
+
+自动模板移除 `auto-printed-at` 与 `continuous-printed-at`，但运行时 `SYSTEM_PRINT_DATE_ID`、系统数据源目录和既有模板解析保持不变。屏幕预览样式由 `composeRenderedPrintPages` 以 `@media screen` 注入，每个固定页有独立白纸、20px 间距和克制阴影；连续只有一个长页容器。浏览器打印仍由 Goal v14 的 `@media print` 页盒规则控制，屏幕装饰不参与物理分页。
+
+# 14. Goal v19：容量前置校验与可重试候选快照
+
+50 条边界必须下沉到 `prepareBatchCandidate` 事务入口。调用方传入已经去重并冻结的记录 ID；事务先调用领域校验，再允许执行 `loadJob`。因此 51 条路径不会调用主记录读取、上下文复核或设计器渲染，页面层可以保留即时提示，但不再是唯一安全边界。成功读取后的 PrintJob 记录顺序必须与冻结请求完全一致，不能让网关返回子集或重排后继续提交。
+
+超时重试使用只存在于内存的 `BatchRetryRequest`：保存失败时的 Base、表、视图、宿主记录、模板 ID 和有序记录 ID，不保存字段值或模板副本。点击重试直接复用该快照，不重新打开官方选择器；进入事务前先比较当前上下文和模板。上下文不一致时丢弃快照并要求重新选择。候选成功后清除快照；非超时失败不提供误导性重试。三种排版只在同一候选事务的 render 回调内分流，因此共享相同的容量、超时和原子提交规则。

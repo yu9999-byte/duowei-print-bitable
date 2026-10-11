@@ -18,7 +18,11 @@ module.exports = {
     host: "127.0.0.1", port: 4784, hot: false,
     setupMiddlewares(middlewares, server) {
       server.app.post("/__test/html", (request, response) => {
-        const count = request.query.count === "50" ? "50" : "7";
+        const count = String(request.query.count ?? "");
+        if (count !== "3") {
+          response.sendStatus(400);
+          return;
+        }
         const chunks = [];
         request.on("data", (chunk) => chunks.push(chunk));
         request.on("end", () => {
@@ -28,7 +32,11 @@ module.exports = {
         });
       });
       server.app.post("/__test/pdf", (request, response) => {
-        const count = request.query.count === "50" ? "50" : "7";
+        const count = String(request.query.count ?? "");
+        if (count !== "3") {
+          response.sendStatus(400);
+          return;
+        }
         const chunks = [];
         let size = 0;
         request.on("data", (chunk) => {

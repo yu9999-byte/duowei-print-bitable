@@ -9,16 +9,3 @@ body { margin: 0; min-width: 320px; }
 button { cursor: pointer; }
 
 #duowei-print-root { display: none; }
-
-@media print {
-  body > * { display: none !important; }
-  body > #duowei-print-root { display: block !important; }
-  #duowei-print-root,
-  #duowei-print-root * { visibility: visible; }
-  [data-duowei-print-page="true"] {
-    break-after: page;
-    margin: 0 !important;
-  }
-  [data-duowei-print-page="true"] > :first-child { margin: 0 !important; }
-  [data-duowei-print-page-last="true"] { break-after: auto; }
-}

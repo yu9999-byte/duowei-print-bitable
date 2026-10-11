@@ -1,3 +1,5 @@
+import { cloneJsonValue } from "./json-clone.ts";
+
 export type PrintableValue =
   | string
   | number
@@ -13,8 +15,18 @@ export type NormalizedField = {
   isPrimary?: boolean;
   isLongText?: boolean;
   isLink?: boolean;
+  linkKind?: "reference" | "detail";
   arrayColumns?: Array<{ field: string; header: string; width?: number }>;
 };
+
+export function isDetailLinkField(field: NormalizedField): boolean {
+  if (field.linkKind) return field.linkKind === "detail";
+  return Boolean(field.isLink || field.arrayColumns);
+}
+
+export function isReferenceLinkField(field: NormalizedField): boolean {
+  return field.isLink === true && field.linkKind === "reference";
+}
 
 export type PrintDocument = {
   recordId: string;
@@ -57,10 +69,10 @@ export function buildPrintJob(input: BuildPrintJobInput): PrintJob {
 
   return {
     source: { ...input.source, recordIds: selectedIds },
-    table: structuredClone(input.table),
+    table: cloneJsonValue(input.table),
     documents: selectedIds.map((recordId) => ({
       recordId,
-      values: structuredClone(recordsById.get(recordId)!.values),
+      values: cloneJsonValue(recordsById.get(recordId)!.values),
     })),
     generatedAt: input.generatedAt,
   };

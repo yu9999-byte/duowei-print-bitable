@@ -1,5 +1,6 @@
 import { bitable, FieldType, type IFieldMeta, type IOpenLink } from "@lark-base-open/js-sdk";
 import {
+  duplicateLinkedRecordId,
   expandLinkedRecords,
   type LinkCellValue,
   type LinkedTableReader,
@@ -29,6 +30,16 @@ function isLinkField(field: IFieldMeta): boolean {
   return field.type === FieldType.SingleLink || field.type === FieldType.DuplexLink;
 }
 
+function getLinkKind(field: IFieldMeta, sourceTableId: string): "reference" | "detail" {
+  const property = "property" in field && field.property && typeof field.property === "object"
+    ? field.property as { tableId?: string; multiple?: boolean }
+    : undefined;
+  if (field.type === FieldType.SingleLink && property?.tableId === sourceTableId) {
+    return "reference";
+  }
+  return property?.multiple === true ? "detail" : "reference";
+}
+
 function toLinkCellValue(value: unknown, field: IFieldMeta): LinkCellValue {
   const link = value && typeof value === "object" ? value as Partial<IOpenLink> : undefined;
   const property = "property" in field && field.property && "tableId" in field.property
@@ -42,6 +53,10 @@ function toLinkCellValue(value: unknown, field: IFieldMeta): LinkCellValue {
   if (!Array.isArray(recordIds)
     || recordIds.some((recordId) => typeof recordId !== "string" || !recordId)) {
     throw new Error(`关联字段记录 ID 无效：${field.name}`);
+  }
+  const duplicateId = duplicateLinkedRecordId(recordIds);
+  if (duplicateId) {
+    throw new Error(`关联字段包含重复记录 ID：${field.name}（${duplicateId}）`);
   }
   return {
     tableId,
@@ -169,6 +184,10 @@ export async function loadPrintJob(
       if (!isLinkField(field)) {
         return [field.name, await getCellString(recordId, field)] as const;
       }
+      if (getLinkKind(field, selection.tableId) === "reference") {
+        const value = await getCellString(recordId, field);
+        return [field.name, value.trim() ? value : "—"] as const;
+      }
       const linkValue = toLinkCellValue(record.fields[field.id], field);
       const expanded = await expandLinkedRecords(linkValue, await getLinkedReader(linkValue.tableId));
       linkedColumns.set(field.id, expanded.columns);
@@ -201,10 +220,14 @@ export async function loadPrintJob(
     name: field.name,
     type: String(field.type),
     ...(typeof field.isPrimary === "boolean" ? { isPrimary: field.isPrimary } : {}),
-    ...(isLinkField(field) ? {
-      isLink: true,
-      arrayColumns: linkedColumns.get(field.id) ?? [],
-    } : {}),
+    ...(isLinkField(field) ? (() => {
+      const linkKind = getLinkKind(field, selection.tableId);
+      return {
+        isLink: true as const,
+        linkKind,
+        ...(linkKind === "detail" ? { arrayColumns: linkedColumns.get(field.id) ?? [] } : {}),
+      };
+    })() : {}),
   }));
   return buildPrintJob({
     source: { baseId: selection.baseId, tableId: selection.tableId },

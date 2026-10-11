@@ -17,10 +17,10 @@ module.exports = {
   devServer: {
     host: "127.0.0.1", port: 4785, hot: false,
     setupMiddlewares(middlewares, server) {
-      server.app.post("/__test/html", (request, response) => {
+      const saveArtifact = (kind, extension, limit) => (request, response) => {
         const requestUrl = new URL(request.url, "http://127.0.0.1");
         const count = Number(requestUrl.searchParams.get("count"));
-        if (!Number.isInteger(count) || count < 1 || count > 50) {
+        if (![1, 3, 10, 50].includes(count)) {
           response.sendStatus(400);
           return;
         }
@@ -28,14 +28,16 @@ module.exports = {
         let size = 0;
         request.on("data", (chunk) => {
           size += chunk.length;
-          if (size > 20_000_000) request.destroy();
+          if (size > limit) request.destroy();
           else chunks.push(chunk);
         });
         request.on("end", () => {
-          fs.writeFileSync(path.resolve(__dirname, `../../artifacts/default-print-${count}.html`), Buffer.concat(chunks));
+          fs.writeFileSync(path.resolve(__dirname, `../../artifacts/default-${kind}-${count}.${extension}`), Buffer.concat(chunks));
           response.sendStatus(204);
         });
-      });
+      };
+      server.app.post("/__test/html", saveArtifact("print", "html", 20_000_000));
+      server.app.post("/__test/pdf", saveArtifact("engine", "pdf", 20_000_000));
       return middlewares;
     },
   },

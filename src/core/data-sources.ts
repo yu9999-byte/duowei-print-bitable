@@ -1,4 +1,5 @@
-import type { NormalizedField, PrintJob } from "./print-job.ts";
+import { isDetailLinkField, type NormalizedField, type PrintJob } from "./print-job.ts";
+import { cloneJsonValue } from "./json-clone.ts";
 
 export const FIELD_DATA_SOURCE_GROUP_ID = "__duowei_fields";
 export const SYSTEM_DATA_SOURCE_GROUP_ID = "__duowei_system";
@@ -25,7 +26,7 @@ export function getDocumentVariables(job: PrintJob, index: number): Record<strin
     String(generatedAt.getDate()).padStart(2, "0"),
   ].join("-");
   const emptyLinks = Object.fromEntries(job.table.fields
-    .filter((field) => field.isLink)
+    .filter(isDetailLinkField)
     .map((field) => {
       const rows = values[field.name];
       return [
@@ -135,7 +136,7 @@ export function prepareTemplateForOutput(
   if (!template || typeof template !== "object" || Array.isArray(template)) {
     throw new Error("打印模板格式无效：无法准备多字段输出");
   }
-  const cloned = structuredClone(template) as Record<string, unknown>;
+  const cloned = cloneJsonValue(template) as Record<string, unknown>;
   const outputVariables = { ...values };
   const pages = cloned.pages;
   if (!Array.isArray(pages)) return { template: cloned, variables: outputVariables };
@@ -176,7 +177,7 @@ export function buildDataSourceCatalog(fields: NormalizedField[]): DesignerDataS
       children: fields.map((field) => ({
         id: fieldDataSourceId(field.id),
         label: field.name,
-        ...(field.isLink || field.arrayColumns ? { isArray: true } : {}),
+        ...(isDetailLinkField(field) ? { isArray: true } : {}),
       })),
     },
     {
@@ -196,7 +197,7 @@ export function refreshTemplateDataSources(
   if (!template || typeof template !== "object" || Array.isArray(template)) {
     throw new Error("打印模板格式无效：无法刷新数据源");
   }
-  const cloned = structuredClone(template) as Record<string, unknown>;
+  const cloned = cloneJsonValue(template) as Record<string, unknown>;
   const currentExt = cloned.ext && typeof cloned.ext === "object" && !Array.isArray(cloned.ext)
     ? cloned.ext as Record<string, unknown>
     : {};

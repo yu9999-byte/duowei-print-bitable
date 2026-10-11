@@ -50,3 +50,11 @@ test("UT-BATCH-10: the record picker is not constrained by SDK read timeout", as
   );
   assert.deepEqual(ids, ["record-2", "record-1"]);
 });
+
+test("UT-BATCH-10: cancelling the record picker returns an empty candidate without fallback IDs", async () => {
+  const ids = await selectRecordIds(
+    { baseId: "base", tableId: "table", viewId: "view", recordId: "host-record" },
+    async () => [],
+  );
+  assert.deepEqual(ids, []);
+});

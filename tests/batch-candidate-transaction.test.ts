@@ -14,6 +14,35 @@ import { BitableReadTimeoutError, withReadTimeout } from "../src/host/read-timeo
 
 type Rendered = { recordIds: string[]; pages: string[] };
 
+test("UT-BATCH-12: 51 requested records are rejected before load, context checks, or render", async () => {
+  const requestedRecordIds = Array.from({ length: 51 }, (_, index) => `record-${index + 1}`);
+  let loadCalls = 0;
+  let contextChecks = 0;
+  let renderCalls = 0;
+
+  await assert.rejects(
+    prepareBatchCandidate({
+      currentSession: createSinglePrintSession("host"),
+      requestedRecordIds,
+      loadJob: async () => {
+        loadCalls += 1;
+        return printJob(requestedRecordIds);
+      },
+      assertCurrent: async () => { contextChecks += 1; },
+      renderJob: async () => {
+        renderCalls += 1;
+        return { recordIds: requestedRecordIds, pages: [] };
+      },
+      composeRendered: (rendered: Rendered) => rendered.pages.join("\n"),
+    } as Parameters<typeof prepareBatchCandidate<Rendered>>[0]),
+    { message: /50/ },
+  );
+
+  assert.equal(loadCalls, 0);
+  assert.equal(contextChecks, 0);
+  assert.equal(renderCalls, 0);
+});
+
 test("IT-BATCH-RECOVERY-02: a timed-out candidate cannot replace the committed printable batch", async () => {
   const oldJob = printJob(["old-1", "old-2"]);
   const oldSessionResult = commitBatchPrintSession(createSinglePrintSession("host"), {
@@ -39,6 +68,7 @@ test("IT-BATCH-RECOVERY-02: a timed-out candidate cannot replace the committed p
   await assert.rejects(
     prepareBatchCandidate({
       currentSession: committed.session,
+      requestedRecordIds: ["new-1", "new-2", "new-3"],
       loadJob: () => withReadTimeout(
         "读取候选批次",
         new Promise<PrintJob>((resolve) => { resolveLate = resolve; }),
@@ -62,6 +92,7 @@ test("IT-BATCH-RECOVERY-02: a timed-out candidate cannot replace the committed p
 
   const retry = await prepareBatchCandidate({
     currentSession: committed.session,
+    requestedRecordIds: ["new-1", "new-2", "new-3"],
     loadJob: async () => printJob(["new-1", "new-2", "new-3"]),
     assertCurrent: async () => undefined,
     renderJob: async (job) => ({
@@ -89,6 +120,7 @@ test("IT-BATCH-RECOVERY-03: render or context failure returns no partial candida
   await assert.rejects(
     prepareBatchCandidate({
       currentSession,
+      requestedRecordIds: ["candidate"],
       loadJob: async () => printJob(["candidate"]),
       assertCurrent: async () => { contextChecks += 1; },
       renderJob: async () => { throw new Error("candidate render failed"); },
@@ -101,6 +133,7 @@ test("IT-BATCH-RECOVERY-03: render or context failure returns no partial candida
   await assert.rejects(
     prepareBatchCandidate({
       currentSession,
+      requestedRecordIds: ["stale"],
       loadJob: async () => printJob(["stale"]),
       assertCurrent: async () => { throw new Error("context changed"); },
       renderJob: async () => ({ recordIds: ["stale"], pages: ["stale"] }),
@@ -108,6 +141,42 @@ test("IT-BATCH-RECOVERY-03: render or context failure returns no partial candida
     }),
     { message: "context changed" },
   );
+});
+
+test("IT-BATCH-RECOVERY-04: mismatched load results are rejected before render", async () => {
+  const oldSessionResult = commitBatchPrintSession(createSinglePrintSession("host"), {
+    recordIds: ["old-1", "old-2"],
+    summaries: [
+      { recordId: "old-1", label: "old-1" },
+      { recordId: "old-2", label: "old-2" },
+    ],
+  });
+  assert.equal(oldSessionResult.ok, true);
+  if (!oldSessionResult.ok) return;
+  let renderCalls = 0;
+
+  for (const loadedIds of [
+    ["new-2", "new-1", "new-3"],
+    ["new-1", "new-2"],
+  ]) {
+    await assert.rejects(
+      prepareBatchCandidate({
+        currentSession: oldSessionResult.session,
+        requestedRecordIds: ["new-1", "new-2", "new-3"],
+        loadJob: async () => printJob(loadedIds),
+        assertCurrent: async () => undefined,
+        renderJob: async () => {
+          renderCalls += 1;
+          return { recordIds: [], pages: [] };
+        },
+        composeRendered: (rendered: Rendered) => rendered.pages.join("\n"),
+      }),
+      { message: /读取结果与所选记录不一致/ },
+    );
+  }
+
+  assert.equal(renderCalls, 0);
+  assert.deepEqual(oldSessionResult.session.committedRecordIds, ["old-1", "old-2"]);
 });
 
 function printJob(recordIds: string[]): PrintJob {

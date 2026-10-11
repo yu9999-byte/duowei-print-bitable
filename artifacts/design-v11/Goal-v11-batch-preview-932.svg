@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="932" height="540" viewBox="0 0 932 540">
+  <style>
+    text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#1f2329}.muted{fill:#8f959e}.sub{fill:#646a73}.tiny{font-size:10px}.small{font-size:11px}.body{font-size:12px}.label{font-size:13px}.title{font-size:14px;font-weight:600}.btn{fill:#fff;stroke:#dee0e3}.primary{fill:#3370ff}.primaryText{fill:#fff;font-weight:600}.divider{stroke:#ebecef}.paperLine{stroke:#dee0e3}.active{fill:#e8f0ff;stroke:#8bb1ff}
+  </style>
+  <rect width="932" height="540" fill="#fff"/>
+  <rect x="0" y="0" width="932" height="42" fill="#fff"/><line x1="0" y1="42" x2="932" y2="42" class="divider"/>
+  <rect x="12" y="9" width="24" height="24" rx="6" fill="#3370ff"/><text x="24" y="26" text-anchor="middle" font-size="12" class="primaryText">印</text><text x="44" y="26" class="title">多维打印</text>
+  <rect x="0" y="42" width="186" height="498" fill="#fff"/><line x1="186" y1="42" x2="186" y2="540" class="divider"/>
+  <text x="14" y="66" class="label" font-weight="600">模板</text><text x="169" y="66" text-anchor="end" class="tiny muted">8 个</text>
+  <g class="body"><text x="18" y="90">仓库订单表 · 自动模…</text><text x="18" y="105" class="tiny muted">默认排版  <tspan fill="#2ea121">默认</tspan></text>
+  <text x="18" y="138">新模板 2</text><text x="18" y="153" class="tiny muted">默认排版</text></g>
+  <rect x="8" y="164" width="170" height="44" rx="6" class="active"/><rect x="8" y="171" width="3" height="30" rx="1.5" fill="#3370ff"/><text x="18" y="184" class="body" font-weight="600">标签模板 3</text><text x="18" y="200" class="tiny muted">标签排版</text><text x="162" y="189" class="small sub">···</text>
+  <g class="body"><text x="18" y="232">连续模板 4</text><text x="18" y="247" class="tiny muted">连续排版</text><text x="18" y="280">标签模板 5</text><text x="18" y="295" class="tiny muted">标签排版</text><text x="18" y="328">连续模板 6</text><text x="18" y="343" class="tiny muted">连续排版</text><text x="18" y="376">连续模板 7</text><text x="18" y="391" class="tiny muted">连续排版</text><text x="18" y="424">标签模板 8</text><text x="18" y="439" class="tiny muted">标签排版</text></g>
+  <line x1="8" y1="492" x2="178" y2="492" class="divider"/><rect x="8" y="500" width="170" height="32" rx="6" class="btn"/><text x="93" y="521" text-anchor="middle" class="body">＋ 新建模板</text>
+  <rect x="186" y="42" width="746" height="66" fill="#fff"/><line x1="186" y1="108" x2="932" y2="108" class="divider"/>
+  <text x="202" y="65" class="title">标签模板 3</text><text x="202" y="84" class="tiny muted">标签排版 · A4 纵向 · 已选 3 条记录</text>
+  <g><rect x="518" y="57" width="74" height="32" rx="6" class="btn"/><text x="555" y="77" text-anchor="middle" class="small">重新选择</text><rect x="598" y="57" width="64" height="32" rx="6" fill="#fff"/><text x="630" y="77" text-anchor="middle" class="small sub">退出批量</text><rect x="668" y="57" width="68" height="32" rx="6" class="btn"/><text x="702" y="77" text-anchor="middle" class="small">导出 PDF</text><rect x="742" y="57" width="72" height="32" rx="6" class="primary"/><text x="778" y="77" text-anchor="middle" class="small primaryText">打印 3 条</text><rect x="820" y="57" width="96" height="32" rx="6" class="btn"/><text x="868" y="77" text-anchor="middle" class="small">编辑模板</text></g>
+  <rect x="186" y="108" width="746" height="432" fill="#f2f3f5"/>
+  <rect x="322" y="128" width="474" height="390" fill="#fff" stroke="#ebecef"/><text x="559" y="158" text-anchor="middle" class="title">仓库订单标签</text><line x1="350" y1="171" x2="768" y2="171" stroke="#1f2329"/>
+  <g><rect x="350" y="192" width="126" height="128" rx="2" fill="#fff" stroke="#dee0e3"/><text x="362" y="216" class="label" font-weight="600">PO-0003</text><text x="362" y="238" class="small sub">广州佳禾办公用品商行</text><text x="362" y="258" class="small">中性笔 · 200</text><text x="362" y="294" class="tiny muted">打印日期 2026-10-08</text>
+  <rect x="496" y="192" width="126" height="128" rx="2" fill="#fff" stroke="#dee0e3"/><text x="508" y="216" class="label" font-weight="600">PO-0004</text><text x="508" y="238" class="small sub">深圳鑫源五金制品厂</text><text x="508" y="258" class="small">不锈钢螺丝刀套装</text><text x="508" y="294" class="tiny muted">打印日期 2026-10-08</text>
+  <rect x="642" y="192" width="126" height="128" rx="2" fill="#fff" stroke="#dee0e3"/><text x="654" y="216" class="label" font-weight="600">PO-0005</text><text x="654" y="238" class="small sub">杭州悦动文化传播</text><text x="654" y="258" class="small">彩色卡纸 · 150</text><text x="654" y="294" class="tiny muted">打印日期 2026-10-08</text></g>
+  <text x="350" y="352" class="small muted">同一模板 · 三条记录 · 一页标签预览</text>
+</svg>

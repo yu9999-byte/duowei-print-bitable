@@ -6,6 +6,7 @@ import {
   commitBatchPrintSession,
   createSinglePrintSession,
   exitBatchPrintSession,
+  shouldExitBatchOnTemplateSwitch,
   summarizeBatch,
 } from "../src/core/batch-print-session.ts";
 import type { PrintJob } from "../src/core/print-job.ts";
@@ -63,6 +64,31 @@ test("SPEC-BATCH-05: a valid candidate commits in its supplied order with summar
     assert.deepEqual(result.session.summaries.map((item) => item.label), ["PO-0003", "PO-0001", "PO-0002"]);
     assert.equal(batchSessionRecordLabel(result.session), "已选 3 条");
   }
+});
+
+test("SPEC-BATCH-08: a batch session records the template that owns it", () => {
+  const result = commitBatchPrintSession(createSinglePrintSession("rec-1"), {
+    recordIds: ["rec-1", "rec-2"],
+    summaries: [],
+    templateId: "template-a",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.session.templateId, "template-a");
+});
+
+test("SPEC-BATCH-08: switching away from the owning template requires leaving batch", () => {
+  const result = commitBatchPrintSession(createSinglePrintSession("rec-1"), {
+    recordIds: ["rec-1", "rec-2"],
+    summaries: [],
+    templateId: "template-a",
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(shouldExitBatchOnTemplateSwitch(result.session, "template-a"), false);
+  assert.equal(shouldExitBatchOnTemplateSwitch(result.session, "template-b"), true);
+  const single = exitBatchPrintSession(result.session);
+  assert.equal(single.mode, "single");
+  assert.equal(single.templateId, null);
 });
 
 test("SPEC-BATCH-06: the 51st unique record is rejected without truncation", () => {

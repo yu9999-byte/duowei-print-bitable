@@ -1,4 +1,4 @@
-import type { PrintJob } from "../core/print-job.ts";
+import { isDetailLinkField, type PrintJob } from "../core/print-job.ts";
 import { renderWhenVisible } from "./preview-visibility.ts";
 import { generateTemplate } from "../core/template-generator.ts";
 import { hasNativeLabelGrid, prepareLabelLayout } from "../core/label-layout.ts";
@@ -19,6 +19,13 @@ import {
   type DataSourceClipboardPayload,
   type DesignerDataSourceGroup,
 } from "../core/data-sources.ts";
+import { cloneJsonValue } from "../core/json-clone.ts";
+import {
+  createBatchEditProjection,
+  reconcileBatchEditProjection,
+  type BatchEditLayout,
+  type BatchEditProjection,
+} from "../core/batch-edit-projection.ts";
 
 export type DesignerElement = HTMLElement & {
   isReady?: boolean;
@@ -56,6 +63,14 @@ type DesignerDataSourceState = {
   persistentExt: Record<string, unknown>;
   values: Record<string, unknown>;
   runtimeValues: Record<string, unknown>;
+  elementValues?: Record<string, Record<string, unknown>>;
+  projectionValues?: Record<string, unknown>;
+  batchProjection?: {
+    job: PrintJob;
+    layout: BatchEditLayout;
+    model: BatchEditProjection;
+    needsSync: boolean;
+  };
   clipboard?: DataSourceClipboardPayload;
   pendingBindings: Map<string, PastedDataSourceBinding[]>;
   synchronizing: boolean;
@@ -103,7 +118,7 @@ function getDataSourceDefinitions(job: PrintJob): DataSourceTokenDefinition[] {
   return [
     ...job.table.fields.map((field) => ({ id: fieldDataSourceId(field.id), label: field.name })),
     { id: SYSTEM_PRINT_DATE_ID, label: "打印日期" },
-    ...job.table.fields.filter((field) => field.isLink).map((field) => ({
+    ...job.table.fields.filter(isDetailLinkField).map((field) => ({
       id: `__duowei_print_empty_${field.id}`,
       label: `${field.name}（空数据提示）`,
     })),
@@ -124,8 +139,8 @@ function toRuntimeTemplate(
   persistentTemplate: Record<string, unknown>,
   state: DesignerDataSourceState,
 ): Record<string, unknown> {
-  const runtime = structuredClone(persistentTemplate);
-  const runtimeValues = { ...state.values };
+  const runtime = cloneJsonValue(persistentTemplate);
+  const runtimeValues = { ...state.values, ...state.projectionValues };
   templateElements(runtime).forEach((element, index) => {
     if (element.type !== "text") return;
     const content = typeof element.content === "string" ? element.content : "";
@@ -134,11 +149,14 @@ function toRuntimeTemplate(
     MANAGED_TOKEN_PATTERN.lastIndex = 0;
     if (!MANAGED_TOKEN_PATTERN.test(sourceContent)) return;
     const key = renderKey(element, index);
+    const values = typeof element.id === "string"
+      ? state.elementValues?.[element.id] ?? state.values
+      : state.values;
     element[RUNTIME_SOURCE_CONTENT] = sourceContent;
     element[RUNTIME_SOURCE_VARIABLE] = variable;
     element.content = state.codec.toEditingContent(sourceContent).content;
     element.variable = `@${key}`;
-    runtimeValues[key] = state.codec.toRenderedContent(sourceContent, state.values).content;
+    runtimeValues[key] = state.codec.toRenderedContent(sourceContent, values).content;
   });
   state.runtimeValues = runtimeValues;
   return runtime;
@@ -155,7 +173,7 @@ function toPersistentTemplate(
   runtimeTemplate: Record<string, unknown>,
   state: DesignerDataSourceState,
 ): Record<string, unknown> {
-  const persistent = structuredClone(runtimeTemplate);
+  const persistent = cloneJsonValue(runtimeTemplate);
   delete persistent.testData;
   templateElements(persistent).forEach((element) => {
     if (element.type !== "text") return;
@@ -193,8 +211,13 @@ function toPersistentTemplate(
 export function getPersistentTemplateData(designer: DesignerElement): Record<string, unknown> {
   const raw = templateRecord(designer.getTemplateData());
   const state = designerDataSourceStates.get(designer);
-  if (!state) return structuredClone(raw);
-  return toPersistentTemplate(raw, state);
+  if (!state) return cloneJsonValue(raw);
+  const persistent = toPersistentTemplate(raw, state);
+  if (!state.batchProjection) return persistent;
+  const reconciled = reconcileBatchEditProjection(persistent, state.batchProjection.model);
+  state.batchProjection.model = reconciled.projection;
+  state.batchProjection.needsSync ||= reconciled.changed;
+  return reconciled.template;
 }
 
 export function rememberCopiedDataSource(
@@ -208,12 +231,24 @@ export function rememberCopiedDataSource(
 export async function synchronizeDesignerDataSources(designer: DesignerElement) {
   const state = designerDataSourceStates.get(designer);
   if (!state || state.synchronizing) return;
+  if (state.batchProjection) {
+    try {
+      await synchronizeBatchEditProjection(designer);
+      state.pendingBindings.clear();
+      state.onChange?.();
+    } catch (cause) {
+      const error = cause instanceof Error ? cause : new Error("批量数据源编辑同步失败");
+      state.onError?.(error);
+      throw error;
+    }
+    return;
+  }
   state.synchronizing = true;
   try {
     const persistent = getPersistentTemplateData(designer);
     const ext = persistent.ext;
     state.persistentExt = ext && typeof ext === "object" && !Array.isArray(ext)
-      ? structuredClone(ext as Record<string, unknown>)
+      ? cloneJsonValue(ext as Record<string, unknown>)
       : {};
     const runtime = toRuntimeTemplate(persistent, state);
     if (!designer.loadTemplateData(runtime)) {
@@ -351,7 +386,7 @@ export async function bindPrintJob(designer: DesignerElement, template: unknown,
       getDataSourceDefinitions(job),
       getHistoricalBindings(persistentTemplate),
     ),
-    persistentExt: structuredClone(persistentTemplate.ext),
+    persistentExt: cloneJsonValue(persistentTemplate.ext),
     values,
     runtimeValues: values,
     clipboard: existingState?.clipboard,
@@ -366,6 +401,98 @@ export async function bindPrintJob(designer: DesignerElement, template: unknown,
   designer.setAvailableVariables?.(buildDataSourceCatalog(job.table.fields));
   await designer.setTestData(state.runtimeValues);
   await designer.setVariables(state.runtimeValues);
+}
+
+export async function bindBatchEditProjection(
+  designer: DesignerElement,
+  template: unknown,
+  job: PrintJob,
+  layout: BatchEditLayout,
+) {
+  const persistentTemplate = refreshTemplateDataSources(
+    template ?? generateTemplate(job),
+    job.table.fields,
+  );
+  const projection = createBatchEditProjection(persistentTemplate, job, layout);
+  const existingState = designerDataSourceStates.get(designer);
+  const lifecycleOptions = designerLifecycleOptions.get(designer);
+  const values = getDocumentVariables(job, 0);
+  const state: DesignerDataSourceState = {
+    codec: createDataSourceTokenCodec(
+      getDataSourceDefinitions(job),
+      getHistoricalBindings(persistentTemplate),
+    ),
+    persistentExt: cloneJsonValue(projection.template.ext),
+    values,
+    runtimeValues: values,
+    elementValues: projection.elementValues,
+    projectionValues: projection.projectionValues,
+    batchProjection: { job, layout, model: projection, needsSync: false },
+    clipboard: existingState?.clipboard,
+    pendingBindings: new Map(),
+    synchronizing: false,
+    onChange: lifecycleOptions?.onChange ?? existingState?.onChange,
+    onError: lifecycleOptions?.onError ?? existingState?.onError,
+  };
+  designerDataSourceStates.set(designer, state);
+  const runtimeTemplate = toRuntimeTemplate(projection.template, state);
+  if (!designer.loadTemplateData(runtimeTemplate)) throw new Error("批量编辑画布无法加载");
+  designer.setAvailableVariables?.(buildDataSourceCatalog(job.table.fields));
+  await designer.setTestData(state.runtimeValues);
+  await designer.setVariables(state.runtimeValues);
+  // Normalize the initial runtime round-trip before accepting user edits. The
+  // designer may infer a text variable from tokenized content; treating that
+  // inference as a user change would make the first edited instance conflict
+  // with otherwise identical instances.
+  getPersistentTemplateData(designer);
+  state.batchProjection!.needsSync = false;
+}
+
+export async function synchronizeBatchEditProjection(designer: DesignerElement): Promise<boolean> {
+  const state = designerDataSourceStates.get(designer);
+  if (!state?.batchProjection || state.synchronizing) return false;
+  getPersistentTemplateData(designer);
+  if (!state.batchProjection.needsSync) return false;
+
+  const binding = state.batchProjection;
+  const previous = {
+    codec: state.codec,
+    persistentExt: state.persistentExt,
+    runtimeValues: state.runtimeValues,
+    elementValues: state.elementValues,
+    projectionValues: state.projectionValues,
+    model: binding.model,
+  };
+  const projection = createBatchEditProjection(binding.model.baseTemplate, binding.job, binding.layout);
+  state.codec = createDataSourceTokenCodec(
+    getDataSourceDefinitions(binding.job),
+    getHistoricalBindings(projection.baseTemplate),
+  );
+  state.persistentExt = cloneJsonValue(projection.template.ext);
+  state.elementValues = projection.elementValues;
+  state.projectionValues = projection.projectionValues;
+  state.pendingBindings.clear();
+  binding.model = projection;
+  binding.needsSync = false;
+  const runtimeTemplate = toRuntimeTemplate(projection.template, state);
+  state.synchronizing = true;
+  try {
+    if (!designer.loadTemplateData(runtimeTemplate)) throw new Error("批量编辑同步后的画布无法加载");
+    await designer.setTestData(state.runtimeValues);
+    await designer.setVariables(state.runtimeValues);
+    return true;
+  } catch (cause) {
+    state.codec = previous.codec;
+    state.persistentExt = previous.persistentExt;
+    state.runtimeValues = previous.runtimeValues;
+    state.elementValues = previous.elementValues;
+    state.projectionValues = previous.projectionValues;
+    binding.model = previous.model;
+    binding.needsSync = true;
+    throw cause;
+  } finally {
+    state.synchronizing = false;
+  }
 }
 
 export async function bindStoredTemplateOrFallback(
@@ -448,7 +575,8 @@ export function installDesignerSaveInterception(target: EventTarget, save: () =>
 export function installDesignerWorkspaceChrome(designer: DesignerElement, target: EventTarget): () => void {
   const root = designer.shadowRoot;
   if (!root) return () => undefined;
-  // Locked to vue-print-designer 1.7.39: host owns components and save.
+  // Locked to vue-print-designer 1.7.39: host owns component creation and save,
+  // while the designer remains the single owner of selected-element properties.
   const style = document.createElement("style");
   style.textContent = `
     header.h-14 { display: none !important; }
@@ -465,7 +593,6 @@ export function installDesignerWorkspaceChrome(designer: DesignerElement, target
   `;
   root.appendChild(style);
   target.dispatchEvent(new Event("designer:close-elements-panel"));
-  target.dispatchEvent(new Event("designer:close-properties-panel"));
   target.dispatchEvent(new Event("designer:close-structure-panel"));
   const preventSecondPanel = (event: Event) => {
     event.stopImmediatePropagation();
@@ -733,19 +860,40 @@ export async function getLabelPrintJobPdfBlob(
   return blob;
 }
 
-export async function restorePrintJobVariables(designer: DesignerElement, job: PrintJob) {
+export async function restorePrintJobVariables(
+  designer: DesignerElement,
+  job: PrintJob,
+  index = 0,
+) {
   requireDocuments(job);
-  const values = getDocumentVariables(job, 0);
+  if (!Number.isInteger(index) || index < 0 || index >= job.documents.length) {
+    throw new Error("批量编辑示例记录不存在");
+  }
+  const values = getDocumentVariables(job, index);
   const state = designerDataSourceStates.get(designer);
   if (!state) {
     await designer.setVariables(values);
     return;
   }
   const persistent = getPersistentTemplateData(designer);
+  const previousValues = state.values;
   state.values = values;
   toRuntimeTemplate(persistent, state);
-  await designer.setTestData(state.runtimeValues);
-  await designer.setVariables(state.runtimeValues);
+  try {
+    await designer.setTestData(state.runtimeValues);
+    await designer.setVariables(state.runtimeValues);
+  } catch (cause) {
+    state.values = previousValues;
+    toRuntimeTemplate(persistent, state);
+    try {
+      await designer.setTestData(state.runtimeValues);
+      await designer.setVariables(state.runtimeValues);
+    } catch {
+      // Keep the original switching failure as the primary diagnostic. The
+      // caller still retains its committed example index and template draft.
+    }
+    throw cause;
+  }
 }
 
 export async function getPrintPreviewHtml(
@@ -847,7 +995,30 @@ export function composeRenderedPrintPages(rendered: RenderedPrintJob): string {
   const pages = pageMarkup.map((page, index) =>
     `<section class="duowei-print-document" data-duowei-print-page="true"${index === lastPageIndex ? " data-duowei-print-page-last=\"true\"" : ""}>${page}</section>`)
     .join("");
-  return resources.join("") + pages;
+  const width = normalizePrintDimension(rendered.canvasWidth);
+  const height = normalizePrintDimension(rendered.canvasHeight);
+  const screenStyle = `<style data-duowei-preview-style="true">@media screen{html,body{margin:0;padding:0;background:#f2f3f5;}body{box-sizing:border-box;padding:16px 0;}.duowei-print-document{display:block;box-sizing:border-box;width:${width}px;min-height:${height}px;margin:0 auto 20px;background:#fff;box-shadow:0 1px 3px rgba(31,35,41,.12),0 8px 24px rgba(31,35,41,.08);overflow:hidden;}.duowei-print-document:last-child{margin-bottom:0;}}</style>`;
+  return screenStyle + resources.join("") + pages;
+}
+
+export function composeBrowserPrintDocument(rendered: RenderedPrintJob): string {
+  const width = normalizePrintDimension(rendered.canvasWidth);
+  const height = normalizePrintDimension(rendered.canvasHeight);
+  return `<style data-duowei-print-style="true">@page{size:${width}px ${height}px;margin:0;}`
+    + `#duowei-print-root{display:none;}`
+    + `@media print{html,body{margin:0!important;padding:0!important;min-width:0!important;width:${width}px!important;height:auto!important;overflow:visible!important;background:transparent!important;}`
+    + `body > *{display:none!important;}`
+    + `body > #duowei-print-root{display:block!important;box-sizing:border-box!important;width:${width}px!important;min-width:${width}px!important;max-width:${width}px!important;height:auto!important;margin:0!important;padding:0!important;overflow:visible!important;}`
+    + `#duowei-print-root,#duowei-print-root *{visibility:visible;}`
+    + `[data-duowei-print-page="true"]{display:block!important;position:relative!important;box-sizing:border-box!important;width:${width}px!important;min-width:${width}px!important;max-width:${width}px!important;height:${height}px!important;min-height:${height}px!important;max-height:${height}px!important;margin:0!important;padding:0!important;overflow:hidden!important;break-inside:avoid-page!important;page-break-inside:avoid!important;break-after:page!important;page-break-after:always!important;box-shadow:none!important;filter:none!important;outline:none!important;}`
+    + `[data-duowei-print-page="true"] > :first-child{display:block!important;box-sizing:border-box!important;width:100%!important;min-width:100%!important;max-width:100%!important;height:100%!important;min-height:100%!important;max-height:100%!important;margin:0!important;padding:0!important;box-shadow:none!important;filter:none!important;outline:none!important;overflow:hidden!important;}`
+    + `[data-duowei-print-page-last="true"]{break-after:auto!important;page-break-after:auto!important;}`
+    + `}</style>${composeRenderedPrintPages(rendered)}`;
+}
+
+function normalizePrintDimension(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) throw new Error("打印纸张尺寸无效");
+  return value;
 }
 
 function renderedPageCount(html: string): number {
@@ -886,8 +1057,12 @@ function elementMarkup(element: Element): string {
 }
 
 export function renderedPreviewHeight(rendered: RenderedPrintJob): number {
-  const pageCount = rendered.pageCounts.reduce((sum, count) => sum + count, 0);
+  const pageCount = renderedOutputPageCount(rendered);
   return Math.max(320, pageCount * rendered.canvasHeight + Math.max(0, pageCount - 1) * 20 + 32);
+}
+
+export function renderedOutputPageCount(rendered: RenderedPrintJob | null): number {
+  return rendered?.pageCounts.reduce((sum, count) => sum + count, 0) ?? 0;
 }
 
 export async function previewPrintJob(
@@ -944,8 +1119,7 @@ async function printHtmlInCurrentDocument(rendered: RenderedPrintJob) {
   releasePreviousPrint?.();
   const root = document.createElement("div");
   root.id = "duowei-print-root";
-  root.innerHTML = `<style>@page{size:${rendered.canvasWidth}px ${rendered.canvasHeight}px;margin:0}</style>`
-    + composeRenderedPrintPages(rendered);
+  root.innerHTML = composeBrowserPrintDocument(rendered);
   document.body.appendChild(root);
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
   const cleanup = () => {
@@ -1031,6 +1205,17 @@ export async function exportPrintJob(
   job: PrintJob,
   filename = "duowei-print.pdf",
 ): Promise<PdfExportResult> {
+  const blob = await getPrintJobPdfBlob(designer, job, filename);
+  const result = await inspectPdfBlob(blob, filename);
+  submitPdfDownload(blob, result.filename);
+  return result;
+}
+
+export async function getPrintJobPdfBlob(
+  designer: DesignerElement,
+  job: PrintJob,
+  filename = "duowei-print.pdf",
+): Promise<Blob> {
   requireDocuments(job);
   let blob: Blob | null;
   if (hasDesignerLabelGrid(designer)) {
@@ -1052,7 +1237,5 @@ export async function exportPrintJob(
     );
   }
   if (!blob) throw new Error("PDF 生成失败");
-  const result = await inspectPdfBlob(blob, filename);
-  submitPdfDownload(blob, result.filename);
-  return result;
+  return blob;
 }

@@ -62,5 +62,12 @@ module.exports = {
     host: "127.0.0.1",
     port: 8081,
     hot: false,
+    static: [
+      {
+        directory: __dirname,
+        publicPath: "/__harness__",
+        watch: false,
+      },
+    ],
   },
 };

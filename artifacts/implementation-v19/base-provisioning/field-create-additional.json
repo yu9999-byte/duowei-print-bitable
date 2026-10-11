@@ -1,0 +1,92 @@
+[
+  {
+    "type": "text",
+    "name": "客户名称",
+    "style": {
+      "type": "plain"
+    }
+  },
+  {
+    "type": "text",
+    "name": "商品名称",
+    "style": {
+      "type": "plain"
+    }
+  },
+  {
+    "type": "number",
+    "name": "数量",
+    "style": {
+      "type": "plain",
+      "precision": 0,
+      "percentage": false,
+      "thousands_separator": false
+    }
+  },
+  {
+    "type": "number",
+    "name": "单价",
+    "style": {
+      "type": "currency",
+      "precision": 2,
+      "currency_code": "CNY"
+    }
+  },
+  {
+    "type": "select",
+    "name": "订单状态",
+    "multiple": false,
+    "options": [
+      {
+        "name": "待处理",
+        "hue": "Blue",
+        "lightness": "Lighter"
+      },
+      {
+        "name": "处理中",
+        "hue": "Orange",
+        "lightness": "Lighter"
+      },
+      {
+        "name": "已完成",
+        "hue": "Green",
+        "lightness": "Lighter"
+      }
+    ]
+  },
+  {
+    "type": "datetime",
+    "name": "下单日期",
+    "style": {
+      "format": "yyyy-MM-dd"
+    }
+  },
+  {
+    "type": "datetime",
+    "name": "要求送达日期",
+    "style": {
+      "format": "yyyy-MM-dd"
+    }
+  },
+  {
+    "type": "text",
+    "name": "联系电话",
+    "style": {
+      "type": "phone"
+    }
+  },
+  {
+    "type": "text",
+    "name": "收货地址",
+    "style": {
+      "type": "plain"
+    }
+  },
+  {
+    "type": "text",
+    "name": "备注",
+    "style": {
+      "type": "plain"
+    }
+  }
+]

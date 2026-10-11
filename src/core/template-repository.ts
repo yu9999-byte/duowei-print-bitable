@@ -269,7 +269,7 @@ function parseCollection(raw: unknown, context: TemplateContext): TemplateCollec
   if (collectionRevision(envelope.templates, envelope.defaultId) !== envelope.revision) {
     throw new Error("模板集合校验失败，未加载可能损坏的数据");
   }
-  return structuredClone({ templates: envelope.templates, defaultId: envelope.defaultId, revision: envelope.revision });
+  return cloneJsonValue({ templates: envelope.templates, defaultId: envelope.defaultId, revision: envelope.revision });
 }
 
 export function createTemplateRepository(
@@ -311,7 +311,7 @@ export function createTemplateRepository(
     };
     const persisted = await storage.setData(templateCollectionKey(context.baseId, context.tableId), envelope);
     if (!persisted) throw new Error("活动模板保存失败，飞书存储未确认写入");
-    return structuredClone({ templates: collection.templates, defaultId: collection.defaultId, revision });
+    return cloneJsonValue({ templates: collection.templates, defaultId: collection.defaultId, revision });
   };
 
   const requireItem = (collection: TemplateCollection, id: string) => {
@@ -377,3 +377,4 @@ export function createTemplateRepository(
     },
   };
 }
+import { cloneJsonValue } from "./json-clone.ts";

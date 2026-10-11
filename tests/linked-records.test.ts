@@ -60,3 +60,30 @@ test("SPEC-DATA-02: a missing linked record fails explicitly instead of returnin
     { message: "关联记录读取失败：missing" },
   );
 });
+
+test("SPEC-LINK-01: duplicate linked record IDs are rejected instead of printed twice", async () => {
+  await assert.rejects(
+    () => expandLinkedRecords(
+      { tableId: "table-lines", recordIds: ["r1", "r1"], text: "笔记本,笔记本" },
+      reader(),
+    ),
+    { message: "关联字段包含重复记录 ID：r1" },
+  );
+});
+
+test("SPEC-LINK-03: timeout semantics survive record-level context wrapping", async () => {
+  const timeout = Object.assign(new Error("读取多维表格数据超时：读取关联记录"), {
+    name: "BitableReadTimeoutError",
+  });
+  const timeoutReader: LinkedTableReader = {
+    async getOrderedFields() { return [{ id: "f1", name: "产品" }]; },
+    async getCellText() { throw timeout; },
+  };
+  await assert.rejects(
+    () => expandLinkedRecords(
+      { tableId: "table-lines", recordIds: ["r1"], text: "笔记本" },
+      timeoutReader,
+    ),
+    (error: unknown) => error === timeout,
+  );
+});

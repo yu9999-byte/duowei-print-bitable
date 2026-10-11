@@ -12,19 +12,36 @@ export type BatchPrintSession = {
   hostRecordId: string | null;
   committedRecordIds: string[];
   summaries: BatchRecordSummary[];
+  templateId: string | null;
 };
 
 export type BatchCommitInput = {
   recordIds: string[];
   summaries: BatchRecordSummary[];
+  templateId?: string | null;
 };
 
 export type BatchCommitResult =
   | { ok: true; session: BatchPrintSession }
   | { ok: false; message: string };
 
+export type BatchRecordIdValidation =
+  | { ok: true; recordIds: string[] }
+  | { ok: false; message: string };
+
 function uniqueRecordIds(recordIds: string[]): string[] {
   return Array.from(new Set(recordIds.filter(Boolean)));
+}
+
+export function validateBatchRecordIds(recordIds: readonly string[]): BatchRecordIdValidation {
+  const normalized = uniqueRecordIds([...recordIds]);
+  if (normalized.length === 0) {
+    return { ok: false, message: "请至少选择一条记录；未更改当前打印批次" };
+  }
+  if (normalized.length > MAX_BATCH_RECORDS) {
+    return { ok: false, message: `一次最多选择 ${MAX_BATCH_RECORDS} 条记录；未更改当前打印批次` };
+  }
+  return { ok: true, recordIds: normalized };
 }
 
 export function createSinglePrintSession(recordId: string | null): BatchPrintSession {
@@ -33,6 +50,7 @@ export function createSinglePrintSession(recordId: string | null): BatchPrintSes
     hostRecordId: recordId,
     committedRecordIds: recordId ? [recordId] : [],
     summaries: recordId ? [{ recordId, label: recordId }] : [],
+    templateId: null,
   };
 }
 
@@ -55,13 +73,9 @@ export function commitBatchPrintSession(
   current: BatchPrintSession,
   input: BatchCommitInput,
 ): BatchCommitResult {
-  const recordIds = uniqueRecordIds(input.recordIds);
-  if (recordIds.length === 0) {
-    return { ok: false, message: "请至少选择一条记录；未更改当前打印批次" };
-  }
-  if (recordIds.length > MAX_BATCH_RECORDS) {
-    return { ok: false, message: `一次最多选择 ${MAX_BATCH_RECORDS} 条记录；未更改当前打印批次` };
-  }
+  const validation = validateBatchRecordIds(input.recordIds);
+  if (!validation.ok) return validation;
+  const { recordIds } = validation;
   const summaryById = new Map(input.summaries.map((item) => [item.recordId, item]));
   return {
     ok: true,
@@ -70,12 +84,20 @@ export function commitBatchPrintSession(
       hostRecordId: current.hostRecordId,
       committedRecordIds: recordIds,
       summaries: recordIds.map((recordId) => summaryById.get(recordId) ?? ({ recordId, label: recordId })),
+      templateId: input.templateId ?? null,
     },
   };
 }
 
 export function exitBatchPrintSession(session: BatchPrintSession): BatchPrintSession {
   return createSinglePrintSession(session.hostRecordId);
+}
+
+export function shouldExitBatchOnTemplateSwitch(
+  session: BatchPrintSession,
+  targetTemplateId: string,
+): boolean {
+  return session.mode === "batch" && session.templateId !== targetTemplateId;
 }
 
 export function batchSessionRecordLabel(session: BatchPrintSession): string {

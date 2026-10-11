@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { bitable } from "@lark-base-open/js-sdk";
-import { loadPrintJob } from "../src/host/bitable-gateway.ts";
+import { BitableReadTimeoutError, loadPrintJob } from "../src/host/bitable-gateway.ts";
 
 type GetTable = typeof bitable.base.getTable;
 
@@ -133,6 +133,7 @@ for (const linkType of [18, 21] as const) {
         name: "明细",
         type: String(linkType),
         isLink: true,
+        linkKind: "detail",
         arrayColumns: [
           { field: "产品", header: "产品" },
           { field: "数量", header: "数量" },
@@ -167,6 +168,116 @@ test("SPEC-LINK-03: gateway keeps link columns when the current record has no li
   }
 });
 
+test("SPEC-LINK-01: a single-value parent link stays readable text and never becomes a detail table", async () => {
+  const originalGetTable = bitable.base.getTable;
+  const mainTable = {
+    async getFieldMetaList() { return [{
+      id: "parent",
+      name: "父记录",
+      type: 18,
+      property: { tableId: "table-orders", multiple: false },
+    }]; },
+    async getName() { return "订单"; },
+    async getRecordById() {
+      return { fields: { parent: { tableId: "table-orders", recordIds: ["order-0"], text: "PO-0001" } } };
+    },
+    async getFieldById() {
+      return { async getCellString() { return "PO-0001"; } };
+    },
+  };
+  bitable.base.getTable = (async () => mainTable) as unknown as GetTable;
+  try {
+    const job = await loadPrintJob(
+      { baseId: "base-test", tableId: "table-orders", viewId: "view-orders" },
+      ["order-1"],
+    );
+    assert.deepEqual(job.table.fields[0], {
+      id: "parent",
+      name: "父记录",
+      type: "18",
+      isLink: true,
+      linkKind: "reference",
+    });
+    assert.equal(job.documents[0].values.父记录, "PO-0001");
+  } finally {
+    bitable.base.getTable = originalGetTable;
+  }
+});
+
+test("SPEC-LINK-01: a one-way self-link parent remains text when the SDK reports multiple true", async () => {
+  const originalGetTable = bitable.base.getTable;
+  const mainTable = {
+    async getFieldMetaList() { return [{
+      id: "parent",
+      name: "父记录",
+      type: 18,
+      property: { tableId: "table-orders", multiple: true },
+    }]; },
+    async getName() { return "订单"; },
+    async getViewList() { return [{
+      async getFieldMetaList() { return [{ id: "number", name: "订单编号", type: 1 }]; },
+    }]; },
+    async getRecordById(recordId: string) {
+      if (recordId === "order-0") return { fields: { number: "PO-0001" } };
+      return {
+        fields: {
+          parent: { tableId: "table-orders", recordIds: ["order-0"], text: "PO-0001" },
+        },
+      };
+    },
+    async getFieldById(fieldId: string) {
+      return {
+        async getCellString(recordId: string) {
+          if (fieldId === "parent" && recordId === "order-1") return "PO-0001";
+          if (fieldId === "number" && recordId === "order-0") return "PO-0001";
+          return "";
+        },
+      };
+    },
+  };
+  bitable.base.getTable = (async () => mainTable) as unknown as GetTable;
+  try {
+    const job = await loadPrintJob(
+      { baseId: "base-test", tableId: "table-orders", viewId: "view-orders" },
+      ["order-1"],
+    );
+    assert.deepEqual(job.table.fields[0], {
+      id: "parent",
+      name: "父记录",
+      type: "18",
+      isLink: true,
+      linkKind: "reference",
+    });
+    assert.equal(job.documents[0].values.父记录, "PO-0001");
+  } finally {
+    bitable.base.getTable = originalGetTable;
+  }
+});
+
+test("SPEC-LINK-01: an empty single-value parent link uses an explicit empty value", async () => {
+  const originalGetTable = bitable.base.getTable;
+  const mainTable = {
+    async getFieldMetaList() { return [{
+      id: "parent", name: "父记录", type: 18,
+      property: { tableId: "table-orders", multiple: true },
+    }]; },
+    async getName() { return "订单"; },
+    async getRecordById() { return { fields: { parent: null } }; },
+    async getFieldById() { return { async getCellString() { return ""; } }; },
+  };
+  bitable.base.getTable = (async () => mainTable) as unknown as GetTable;
+  try {
+    const job = await loadPrintJob(
+      { baseId: "base-test", tableId: "table-orders", viewId: "view-orders" },
+      ["order-1"],
+    );
+    assert.equal(job.table.fields[0].linkKind, "reference");
+    assert.equal(job.documents[0].values.父记录, "—");
+  } finally {
+    bitable.base.getTable = originalGetTable;
+  }
+});
+
 test("SPEC-DATA-02: malformed link IDs fail instead of silently dropping detail rows", async () => {
   const originalGetTable = bitable.base.getTable;
   const fixture = installBaseFixture(18, ["line-1", null]);
@@ -178,6 +289,67 @@ test("SPEC-DATA-02: malformed link IDs fail instead of silently dropping detail 
         ["order-1"],
       ),
       { message: "关联字段记录 ID 无效：明细" },
+    );
+  } finally {
+    bitable.base.getTable = originalGetTable;
+  }
+});
+
+test("SPEC-LINK-01: duplicate link IDs fail instead of duplicating a detail row", async () => {
+  const originalGetTable = bitable.base.getTable;
+  const fixture = installBaseFixture(18, ["line-1", "line-1"]);
+  bitable.base.getTable = fixture.getTable;
+  try {
+    await assert.rejects(
+      () => loadPrintJob(
+        { baseId: "base-test", tableId: "table-orders", viewId: "view-orders" },
+        ["order-1"],
+      ),
+      { message: "关联字段包含重复记录 ID：明细（line-1）" },
+    );
+  } finally {
+    bitable.base.getTable = originalGetTable;
+  }
+});
+
+test("SPEC-LINK-03: an unavailable linked-table view fails explicitly", async () => {
+  const originalGetTable = bitable.base.getTable;
+  const fixture = installBaseFixture(18, ["line-1"]);
+  bitable.base.getTable = (async (tableId: string) => {
+    const table = await fixture.getTable(tableId);
+    if (tableId !== "table-lines") return table;
+    return { ...table, async getViewList() { return []; } };
+  }) as unknown as GetTable;
+  try {
+    await assert.rejects(
+      () => loadPrintJob(
+        { baseId: "base-test", tableId: "table-orders", viewId: "view-orders" },
+        ["order-1"],
+      ),
+      { message: "关联表缺少可用视图：table-lines" },
+    );
+  } finally {
+    bitable.base.getTable = originalGetTable;
+  }
+});
+
+test("SPEC-LINK-03: a linked-record timeout remains retryable", async () => {
+  const originalGetTable = bitable.base.getTable;
+  const fixture = installBaseFixture(18, ["line-1"]);
+  bitable.base.getTable = (async (tableId: string) => {
+    const table = await fixture.getTable(tableId);
+    if (tableId !== "table-lines") return table;
+    return { ...table, getRecordById() { return new Promise<never>(() => undefined); } };
+  }) as unknown as GetTable;
+  try {
+    await assert.rejects(
+      () => loadPrintJob(
+        { baseId: "base-test", tableId: "table-orders", viewId: "view-orders" },
+        ["order-1"],
+        { timeoutMs: 10 },
+      ),
+      (error: unknown) => error instanceof BitableReadTimeoutError
+        && /读取关联记录/.test(error.message),
     );
   } finally {
     bitable.base.getTable = originalGetTable;

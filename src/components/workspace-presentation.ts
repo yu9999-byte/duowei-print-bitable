@@ -35,12 +35,12 @@ const PRESENTATIONS: Record<WorkspaceSurface, WorkspacePresentation> = {
     showPreview: true,
   },
   "single-edit": {
-    showBrand: false,
+    showBrand: true,
     showTemplateDirectory: false,
     showEditorPanel: true,
     showInlineEditorPanel: false,
     showBatchSummary: false,
-    showWorkspaceToolbar: false,
+    showWorkspaceToolbar: true,
     showRecordPicker: false,
     showExitBatch: false,
     showOutputs: false,
@@ -52,10 +52,10 @@ const PRESENTATIONS: Record<WorkspaceSurface, WorkspacePresentation> = {
   },
   "batch-preview": {
     showBrand: true,
-    showTemplateDirectory: false,
+    showTemplateDirectory: true,
     showEditorPanel: false,
     showInlineEditorPanel: false,
-    showBatchSummary: true,
+    showBatchSummary: false,
     showWorkspaceToolbar: true,
     showRecordPicker: true,
     showExitBatch: true,
@@ -69,9 +69,9 @@ const PRESENTATIONS: Record<WorkspaceSurface, WorkspacePresentation> = {
   "batch-edit": {
     showBrand: true,
     showTemplateDirectory: false,
-    showEditorPanel: false,
-    showInlineEditorPanel: true,
-    showBatchSummary: true,
+    showEditorPanel: true,
+    showInlineEditorPanel: false,
+    showBatchSummary: false,
     showWorkspaceToolbar: true,
     showRecordPicker: false,
     showExitBatch: false,
@@ -90,6 +90,8 @@ export function getWorkspacePresentation(surface: WorkspaceSurface): WorkspacePr
 
 export function getWorkspaceSidebarLayout(surface: WorkspaceSurface, viewportWidth: number) {
   const compact = viewportWidth <= 760;
-  if (surface === "single-edit") return { width: compact ? 188 : 208, compact };
+  if (surface === "single-edit" || surface === "batch-edit") {
+    return { width: compact ? 156 : 190, compact };
+  }
   return { width: compact ? 164 : 188, compact };
 }

@@ -56,6 +56,24 @@ test("UT-SRC-08/SPEC-SRC-02: print date uses the local day east of UTC at midnig
   assert.equal(variables[0].打印日期, "2026-10-04");
 });
 
+test("CT-TPL-05: reactive template proxies can be rebound and prepared for output", () => {
+  const token = `@${fieldDataSourceId("order")}`;
+  const template = new Proxy({
+    pages: [{ id: "page", elements: [{ id: "order", type: "text", content: `订单：${token}`, variable: token }] }],
+    canvasSize: { width: 794, height: 1123 },
+    ext: { fieldBindings: { order: "订单编号" } },
+  }, {});
+  const fields: NormalizedField[] = [{ id: "order", name: "订单编号", type: "1" }];
+
+  const refreshed = refreshTemplateDataSources(template, fields);
+  const prepared = prepareTemplateForOutput(new Proxy(refreshed, {}), {
+    [fieldDataSourceId("order")]: "PO-0001",
+  });
+
+  assert.equal(((prepared.template.pages as any)[0].elements[0]).content, "@__duowei_render_order");
+  assert.equal(prepared.variables.__duowei_render_order, "订单：PO-0001");
+});
+
 test("UT-SRC-08/SPEC-SRC-02: print date uses the previous local day west of UTC", () => {
   const variables = variablesInTimezone(dateJob("2026-10-04T02:05:03.000Z"), "America/Los_Angeles");
   assert.equal(variables[0][SYSTEM_PRINT_DATE_ID], "2026-10-03");

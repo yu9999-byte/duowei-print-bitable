@@ -19,10 +19,21 @@ export type ExpandedLinkedRecords = {
   rows: Array<Record<string, string>>;
 };
 
+export function duplicateLinkedRecordId(recordIds: readonly string[]): string | undefined {
+  const seenRecordIds = new Set<string>();
+  for (const recordId of recordIds) {
+    if (seenRecordIds.has(recordId)) return recordId;
+    seenRecordIds.add(recordId);
+  }
+  return undefined;
+}
+
 export async function expandLinkedRecords(
   value: LinkCellValue,
   reader: LinkedTableReader,
 ): Promise<ExpandedLinkedRecords> {
+  const duplicateId = duplicateLinkedRecordId(value.recordIds);
+  if (duplicateId) throw new Error(`关联字段包含重复记录 ID：${duplicateId}`);
   const fields = (await reader.getOrderedFields()).slice(0, 5);
   const columns = fields.map((field) => ({
     field: field.name,
@@ -35,7 +46,8 @@ export async function expandLinkedRecords(
         await reader.getCellText(recordId, field.id),
       ] as const));
       return Object.fromEntries(entries);
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.name === "BitableReadTimeoutError") throw error;
       throw new Error(`关联记录读取失败：${recordId}`);
     }
   }));

@@ -2,6 +2,7 @@ import type { PrintJob } from "./print-job.ts";
 import {
   commitBatchPrintSession,
   summarizeBatch,
+  validateBatchRecordIds,
   type BatchPrintSession,
 } from "./batch-print-session.ts";
 
@@ -14,10 +15,12 @@ export type PreparedBatchCandidate<TRendered> = {
 
 export type PrepareBatchCandidateOptions<TRendered> = {
   currentSession: BatchPrintSession;
-  loadJob: () => Promise<PrintJob>;
+  requestedRecordIds: readonly string[];
+  loadJob: (recordIds: readonly string[]) => Promise<PrintJob>;
   assertCurrent: () => Promise<void>;
   renderJob: (job: PrintJob) => Promise<TRendered>;
   composeRendered: (rendered: TRendered) => string;
+  templateId?: string | null;
 };
 
 /**
@@ -29,12 +32,21 @@ export type PrepareBatchCandidateOptions<TRendered> = {
 export async function prepareBatchCandidate<TRendered>(
   options: PrepareBatchCandidateOptions<TRendered>,
 ): Promise<PreparedBatchCandidate<TRendered>> {
-  const job = await options.loadJob();
+  const validation = validateBatchRecordIds(options.requestedRecordIds);
+  if (!validation.ok) throw new Error(validation.message);
+  const requestedRecordIds = validation.recordIds;
+  const job = await options.loadJob(requestedRecordIds);
   await options.assertCurrent();
 
+  if (job.source.recordIds.length !== requestedRecordIds.length
+    || job.source.recordIds.some((recordId, index) => recordId !== requestedRecordIds[index])) {
+    throw new Error("批量读取结果与所选记录不一致；未更改当前打印批次");
+  }
+
   const committed = commitBatchPrintSession(options.currentSession, {
-    recordIds: job.source.recordIds,
+    recordIds: requestedRecordIds,
     summaries: summarizeBatch(job),
+    templateId: options.templateId,
   });
   if (!committed.ok) throw new Error(committed.message);
 

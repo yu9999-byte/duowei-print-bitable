@@ -1,5 +1,6 @@
 import type { PrintJob } from "./print-job.ts";
 import { getDocumentVariables, prepareTemplateForOutput } from "./data-sources.ts";
+import { cloneJsonValue } from "./json-clone.ts";
 
 type Element = Record<string, unknown>;
 
@@ -83,7 +84,7 @@ export function prepareContinuousLayout(template: unknown, job: PrintJob): Conti
     throw new Error("连续纸最终高度无效");
   }
   const first = prepareTemplateForOutput(source, getDocumentVariables(job, 0));
-  const output = structuredClone(first.template) as Record<string, unknown>;
+  const output = cloneJsonValue(first.template) as Record<string, unknown>;
   output.canvasSize = { width: size.width, height: finalHeight };
   const outputPages = output.pages as Array<{ id?: string; elements?: Element[] }>;
   const firstPage = outputPages[0];
