@@ -1,6 +1,5 @@
 package com.duowei.print.service.render;
 
-import com.duowei.print.integration.feishu.FeishuClient;
 import com.duowei.print.security.Protocol;
 import com.fasterxml.jackson.databind.*;
 import java.nio.charset.StandardCharsets;
@@ -14,6 +13,12 @@ import org.springframework.web.bind.annotation.*;
 
 @Service
 public class RenderService {
+    private final com.duowei.print.config.AutomationConfiguration configuration;
+
+    public RenderService(com.duowei.print.config.AutomationConfiguration configuration) {
+        this.configuration = configuration;
+    }
+
     private final java.util.concurrent.ConcurrentMap<String, ChromeDriver> active =
             new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -59,7 +64,19 @@ public class RenderService {
         try {
             driver.manage().timeouts().pageLoadTimeout(Duration.ofSeconds(30));
             driver.manage().timeouts().scriptTimeout(Duration.ofSeconds(90));
-            driver.get(FeishuClient.env("DUOWEI_RENDER_PAGE_URL"));
+            driver.executeCdpCommand("Network.enable", Collections.emptyMap());
+            Map<String, Object> headers = new HashMap<>();
+            headers.put("Authorization", configuration.required("DUOWEI_SERVICE_AUTHORIZATION"));
+            driver.executeCdpCommand(
+                    "Network.setExtraHTTPHeaders", Collections.singletonMap("headers", headers));
+            driver.get(configuration.required("DUOWEI_RENDER_PAGE_URL"));
+            new org.openqa.selenium.support.ui.WebDriverWait(driver, Duration.ofSeconds(30))
+                    .until(
+                            browser ->
+                                    Boolean.TRUE.equals(
+                                            ((JavascriptExecutor) browser)
+                                                    .executeScript(
+                                                            "return Boolean(window.__DUOWEI_AUTOMATION_RENDERER__)")));
             Object value =
                     driver.executeAsyncScript(
                             "const done=arguments[arguments.length-1];const input=JSON.parse(arguments[0]); Promise.resolve().then(()=>{if(!window.__DUOWEI_AUTOMATION_RENDERER__)throw Error('Renderer unavailable');return window.__DUOWEI_AUTOMATION_RENDERER__.render(input)}).then(v=>done({ok:true,value:v}),e=>done({ok:false}));",
@@ -67,6 +84,8 @@ public class RenderService {
             JsonNode result = Protocol.JSON.valueToTree(value);
             if (!result.path("ok").asBoolean()) throw new IllegalStateException("浏览器渲染失败");
             JsonNode a = result.path("value");
+            if (a.path("protocolVersion").asInt() != 1)
+                throw new IllegalStateException("浏览器渲染协议版本不兼容");
             Artifact artifact = new Artifact();
             artifact.fileName = Protocol.required(a, "fileName");
             artifact.contentType = Protocol.required(a, "contentType");
@@ -98,7 +117,11 @@ public class RenderService {
             return artifact;
         } finally {
             active.remove(body.path("artifactKey").asText(), driver);
-            driver.quit();
+            try {
+                driver.quit();
+            } catch (RuntimeException ignored) {
+                // Cleanup must not replace the original rendering failure.
+            }
         }
     }
 }

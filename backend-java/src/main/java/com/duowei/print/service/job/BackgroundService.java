@@ -20,6 +20,7 @@ public class BackgroundService {
     private final RenderService renderer;
     private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
     private final long workerInterval;
+    private final com.duowei.print.config.AutomationConfiguration configuration;
 
     @javax.annotation.PostConstruct
     public void start() {
@@ -35,6 +36,7 @@ public class BackgroundService {
             FeishuClient api,
             RenderService renderer,
             com.duowei.print.config.AutomationConfiguration configuration) {
+        this.configuration = configuration;
         this.jobs = jobs;
         this.api = api;
         this.renderer = renderer;
@@ -48,12 +50,14 @@ public class BackgroundService {
 
     public ResponseEntity<?> submit(String signature, String token, ObjectNode body) {
         if (token.trim().length() < 20) throw new IllegalArgumentException("后台任务缺少临时租户凭证");
+        body = body.deepCopy();
         String key = Protocol.required(body, "taskKey");
+        body.put("taskKey", key);
         if (!key.matches("duowei-job:v1:[0-9a-f]{64}") || body.path("version").asInt() != 1)
             throw new IllegalArgumentException("后台任务键或版本无效");
         for (String f :
                 Arrays.asList("tenantKey", "baseToken", "tableId", "recordId", "outputType"))
-            Protocol.required(body, f);
+            body.put(f, Protocol.required(body, f));
         if (!Arrays.asList("pdf", "png").contains(body.path("outputType").asText())
                 || !body.path("outputType")
                         .equals(body.path("renderRequest").path("output").path("type"))
@@ -68,6 +72,11 @@ public class BackgroundService {
         if (attachment.equals(status)
                 || !error.isEmpty() && (error.equals(attachment) || error.equals(status)))
             throw new IllegalArgumentException("后台任务字段不能重复");
+        ObjectNode normalizedTargets = Protocol.JSON.createObjectNode();
+        normalizedTargets.put("attachmentFieldId", attachment);
+        normalizedTargets.put("statusFieldId", status);
+        body.set("targets", normalizedTargets);
+        targets = normalizedTargets;
         if (!error.isEmpty()) ((ObjectNode) targets).put("errorFieldId", error);
         else ((ObjectNode) targets).remove("errorFieldId");
         Set<String> allowed =
@@ -82,19 +91,17 @@ public class BackgroundService {
                                 "outputType",
                                 "renderRequest",
                                 "targets"));
-        body.fieldNames()
-                .forEachRemaining(
-                        f -> {
-                            if (!allowed.contains(f))
-                                throw new IllegalArgumentException("任务包含不支持的属性");
-                        });
+        Iterator<String> names = body.fieldNames();
+        while (names.hasNext()) {
+            if (!allowed.contains(names.next())) throw new IllegalArgumentException("任务包含不支持的属性");
+        }
         JsonNode claims =
                 Protocol.verify(
                         signature,
                         "duowei-background-job-v1",
                         "duowei-background-job",
                         body,
-                        Protocol.secret("DUOWEI_BACKGROUND_JOB_SIGNING_SECRET_HEX"));
+                        configuration.signingSecret("DUOWEI_BACKGROUND_JOB_SIGNING_SECRET_HEX"));
         if (!key.equals(claims.path("taskKey").asText())) throw new SecurityException("任务键签名不一致");
         boolean existing = jobs.exists(key);
         jobs.createOrRetry(key, body.toString());

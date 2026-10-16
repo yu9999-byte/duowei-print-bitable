@@ -37,6 +37,9 @@ public class RenderCache {
             task.cancel(true);
             renderer.cancel(key);
             throw new IllegalStateException("生成文件超时，请稍后重试", e);
+        } catch (CancellationException e) {
+            cache.remove(key, task);
+            throw new IllegalStateException("生成文件已取消", e);
         } catch (ExecutionException e) {
             cache.remove(key, task);
             throw new IllegalStateException("生成文件失败", e.getCause());
@@ -45,6 +48,13 @@ public class RenderCache {
 
     @PreDestroy
     public void close() {
+        cache.forEach(
+                (key, task) -> {
+                    if (!task.isDone()) {
+                        task.cancel(true);
+                        renderer.cancel(key);
+                    }
+                });
         executor.shutdownNow();
         cache.clear();
     }

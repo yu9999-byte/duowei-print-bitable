@@ -24,6 +24,7 @@ public class RegistryService {
         if (signature == null || signature.trim().isEmpty())
             throw new SecurityException("模板注册表请求缺少身份签名");
         if (read) {
+            body = normalizeRead(body);
             String op = body.path("operation").asText();
             if (!Arrays.asList("get", "list").contains(op))
                 throw new IllegalArgumentException("读取操作无效");
@@ -52,5 +53,22 @@ public class RegistryService {
                 throw new SecurityException("作用域不一致");
         store.upsert(body);
         return ResponseEntity.noContent().build();
+    }
+
+    private JsonNode normalizeRead(JsonNode input) {
+        ObjectNode result = Protocol.JSON.createObjectNode();
+        String operation = Protocol.required(input, "operation");
+        if (!Arrays.asList("get", "list").contains(operation))
+            throw new IllegalArgumentException("读取操作无效");
+        result.put("operation", operation);
+        ObjectNode scope = result.putObject("scope");
+        for (String key : Arrays.asList("tenantKey", "baseToken", "tableId"))
+            scope.put(key, Protocol.required(input.path("scope"), key));
+        if ("get".equals(operation)) {
+            ObjectNode selection = result.putObject("selection");
+            selection.put("id", Protocol.required(input.path("selection"), "id"));
+            selection.put("revision", Protocol.required(input.path("selection"), "revision"));
+        }
+        return result;
     }
 }

@@ -109,7 +109,7 @@ public class OAuthService {
                 Protocol.sign(
                         "duowei-registry-v1",
                         claims,
-                        Protocol.secret("DUOWEI_REGISTRY_WRITE_SIGNING_SECRET_HEX")));
+                        configuration.signingSecret("DUOWEI_REGISTRY_WRITE_SIGNING_SECRET_HEX")));
         result.set("body", authorized);
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(result);
     }
