@@ -1,56 +1,61 @@
-# Java 后台迁移（JDK 8）
+# Java 后台（JDK 8）
 
-迁移来源：`miaoda-duowei-automation/server`。原服务保留，新工程未部署，未切换插件后台。
+来源：妙搭后台 `miaoda-duowei-automation/server`。原代码保留，当前未部署、未切换插件。
 
-## 环境和启动
+## 1. 架构与目录
 
-需要 JDK 8、Maven 3.8+、PostgreSQL、Chrome/Chromium 和匹配版本的 ChromeDriver。将 ChromeDriver 加入 PATH，或使用 JVM 参数 `-Dwebdriver.chrome.driver=绝对路径`。服务使用 Spring Boot 2.7.18、Selenium 4.8.3。
+Spring Boot 2.7.18、Maven、JDK 8、PostgreSQL、Selenium 4.8.3。
+
+| 目录 | 职责 |
+| --- | --- |
+| `src/main/java/com/duowei/print/controller` | HTTP路由、协议适配 |
+| `config` | 配置校验、请求策略与CORS |
+| `service` | 模板、OAuth、渲染、后台任务、事件业务 |
+| `repository` | 模板、后台任务、app_ticket数据库访问 |
+| `integration/feishu` | 飞书HTTP适配 |
+| `security`、`exception` | 签名、数据校验、异常脱敏 |
+| `src/main/resources` | 应用配置和浏览器打印资源 |
+| `src/test/java` | 配置、签名、缓存、接口契约测试 |
+| `migrations` | 与原服务兼容的数据库脚本 |
+| `docs` | 功能对照、验证证据 |
+| `scripts` | 浏览器资源构建 |
+
+## 2. 环境配置
+
+数据库：`DUOWEI_DATABASE_URL`（JDBC PostgreSQL URL）、`DUOWEI_DATABASE_USERNAME`、`DUOWEI_DATABASE_PASSWORD`。
+
+业务：`DUOWEI_PUBLIC_AUTOMATION_BASE_URL`（HTTPS，结尾`/openapi/duowei-print`）、`DUOWEI_OAUTH_REDIRECT_URI`、`DUOWEI_ALLOWED_ORIGINS`、`DUOWEI_FEISHU_APP_ID`、`DUOWEI_FEISHU_APP_SECRET`、`DUOWEI_SERVICE_AUTHORIZATION`（Bearer）、`DUOWEI_EVENT_VERIFICATION_TOKEN`。
+
+签名：`DUOWEI_REGISTRY_WRITE_SIGNING_SECRET_HEX`、`DUOWEI_REGISTRY_READ_SIGNING_SECRET_HEX`、`DUOWEI_RENDERER_SIGNING_SECRET_HEX`、`DUOWEI_BACKGROUND_JOB_SIGNING_SECRET_HEX`，每个至少32字节十六进制，沿用原协议密钥。
+
+运行：`PORT`默认8080；`DUOWEI_BACKGROUND_WORKER_INTERVAL_MS`默认2000；`DUOWEI_RENDER_PAGE_URL`指向渲染器页面；`DUOWEI_CHROMIUM_EXECUTABLE_PATH`可选。准备Chrome/Chromium和匹配的ChromeDriver，将驱动加入PATH或使用`-Dwebdriver.chrome.driver=路径`。
+
+## 3. 构建与测试
 
 ```powershell
+mvn spotless:apply
 mvn clean verify
 java -jar target/print-backend-1.0.0.jar
 ```
 
-核对数据库表结构后使用 `migrations/` 脚本。应用不会自动运行迁移。请先在测试数据库验证，避免改动生产数据。
+Spotless以AOSP四空格规范统一Java格式，构建自动检查。数据库迁移由运维显式执行，不自动改动现有数据库。
 
-## 环境变量
+## 4. 浏览器资源
 
-- `PORT`：默认 8080。
-- `DUOWEI_DATABASE_URL`：`jdbc:postgresql://主机:5432/数据库`。
-- `DUOWEI_DATABASE_USERNAME`、`DUOWEI_DATABASE_PASSWORD`。
-- `DUOWEI_PUBLIC_AUTOMATION_BASE_URL`：HTTPS 公网地址，结尾 `/openapi/duowei-print`。
-- `DUOWEI_OAUTH_REDIRECT_URI`：公网 `/api/automation/oauth/callback`。
-- `DUOWEI_ALLOWED_ORIGINS`：插件允许来源，逗号分隔，不含空格和尾部斜线。
-- `DUOWEI_FEISHU_APP_ID`、`DUOWEI_FEISHU_APP_SECRET`。
-- `DUOWEI_REGISTRY_WRITE_SIGNING_SECRET_HEX`、`DUOWEI_REGISTRY_READ_SIGNING_SECRET_HEX`、`DUOWEI_RENDERER_SIGNING_SECRET_HEX`、`DUOWEI_BACKGROUND_JOB_SIGNING_SECRET_HEX`：沿用现有协议密钥，每个至少32字节，十六进制。
-- `DUOWEI_EVENT_VERIFICATION_TOKEN`。
-- `DUOWEI_RENDER_PAGE_URL`：本 Java 服务 `/openapi/duowei-print/renderer` 的可达地址，建议回环地址。
-- `DUOWEI_CHROMIUM_EXECUTABLE_PATH`：可选浏览器路径。
-
-密钥只从环境注入。需 HTTPS 反向代理才能使用 OAuth Secure Cookie。Java 项目需要单独 Java 托管环境，不能直接用 NestJS 构建命令发布。
-
-## 迁移内容
-
-- 模板 Registry 读写、HMAC 鉴权、作用域绑定、敏感数据检查和 PostgreSQL 存储。
-- OAuth PKCE、Base 编辑权限核验、作用域会话、写入令牌签发和浏览器桥接。
-- Selenium 隔离浏览器渲染、PDF/PNG 产物校验、同版浏览器打印引擎资源。
-- 后台任务提交、数据库持久化、单进程 Worker、临时租户令牌、字段核验、附件上传和当前记录回写。
-- app_ticket 事件校验和存储、2MB JSON 请求限制、允许来源 CORS。
-
-对外保留 `/api/automation` 和 `/openapi/duowei-print` 路径。后台任务继续要求 `x-duowei-tenant-access-token`，令牌只在内存保留90分钟，不写数据库；服务重启后需重新触发自动化提供凭据。默认 Worker 每2秒扫描，部署限单实例。
-
-## 浏览器资源
-
-资源已随工程生成。仅浏览器端打印引擎保留 JavaScript；业务服务不调用 Node 后台。更新引擎时，在原妙搭工程依赖可用的工作区执行：
+PDF/PNG使用原前端打印引擎；Java业务服务不调用原Node后台。资源更新：
 
 ```powershell
 node backend-java/scripts/build-browser-resources.mjs
 ```
 
-## 验证状态和差异
+该构建脚本需要原妙搭工程已安装依赖；生成资源已随工程保存。
 
-当前环境未发现 Java、javac 或 Maven，因此尚未编译、运行 Java 测试或完成真实接口验收。浏览器资源构建及桥接脚本语法检查通过，Java 测试源覆盖签名防篡改与敏感数据拒绝。
+## 5. 验证与迁移状态
 
-上线前必须完成：JDK8编译、Node/Java跨语言签名样例比对、数据库迁移演练、OAuth与模板同步、真实PDF/PNG以及后台任务附件回写验收。当前工程是待验证迁移实现，不能视为已可替代线上服务。
+2026-10-16已用真实OpenJDK 8u452和Maven 3.9.9完成编译、测试及打包；JAR在18081端口启动，健康接口返回成功，桥接页面HTTP 200。启动检查使用虚拟数据库地址，只证明应用启动和无数据库接口，未证明数据库业务链路。
 
-已知行为差异：尚未迁移原服务渲染缓存，重复标准渲染会重新生成；部分错误响应文本/状态与原服务不完全一致；当前数字规范化基于Jackson，浮点数极值签名兼容需要跨语言测试；OAuth state/会话及临时租户令牌为进程内存，多实例需改共享存储；Chrome沙箱需由部署环境支持；现有灰度插件发布不适用于直接托管这个Java服务。本次未发布。
+详见`docs/01-migration-matrix.md`和`docs/02-verification.md`。功能兼容核对仍在进行，不能将当前构建通过视为迁移全部完成。
+
+## 6. 部署边界
+
+HTTPS代理负责TLS。OAuth会话和临时租户凭证在进程内存，当前限单实例；重启后需重新连接或触发自动化。Java需要独立运行环境，不直接复用NestJS托管命令。真实飞书授权、PostgreSQL、PDF/PNG及附件回写尚需完整验收。本次不发布、不切换线上后台。
