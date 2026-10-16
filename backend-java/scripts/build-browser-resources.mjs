@@ -1,0 +1,14 @@
+import { fileURLToPath } from 'node:url';
+import { build } from '../../miaoda-duowei-automation/node_modules/esbuild/lib/main.js';
+import { readFile, writeFile } from 'node:fs/promises';
+const root = new URL('../../miaoda-duowei-automation/', import.meta.url);
+const built = await build({entryPoints:[fileURLToPath(new URL('client/src/automation-renderer-entry.ts',root))],bundle:true,minify:true,platform:'browser',format:'iife',target:['chrome110'],outdir:'out',write:false,loader:{'.css':'css'}});
+const js=built.outputFiles.find(f=>f.path.endsWith('.js')).text.replace(/<\/script/gi,'<\\/script');
+const css=built.outputFiles.find(f=>f.path.endsWith('.css'))?.text??'';
+await writeFile(new URL('../src/main/resources/renderer.html',import.meta.url),`<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><script>${js}</script></body></html>`);
+const source=await readFile(new URL('server/modules/automation/automation-bridge-document.ts',root),'utf8');
+let script=source.split('  const script = `')[1].split('`;\n  const html')[0].replace(/\r/g,'');
+script=script.replace('${scriptJson(allowedOrigins)}','__ALLOWED_ORIGINS__').replace('${scriptJson(authorizationUrl.toString())}','__AUTHORIZATION_URL__').replace('${scriptJson(registryUrl.toString())}','__REGISTRY_URL__').replace('${scriptJson(oauthStartPath)}','__OAUTH_START_PATH__');
+// Decode the original TS template literal escapes without evaluating source.
+script=script.replace(/\\\\/g,'\\');
+await writeFile(new URL('../src/main/resources/bridge.js',import.meta.url),script);
