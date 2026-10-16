@@ -115,7 +115,7 @@ public class OAuthService {
     public ResponseEntity<?> start(String state) {
         purge();
         ObjectNode item = pending.get(state);
-        if (item == null) return ResponseEntity.badRequest().body("连接请求已失效");
+        if (item == null) return failure(null, 400, "连接请求已失效");
         String url =
                 "https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id="
                         + FeishuClient.enc(configuration.required("DUOWEI_FEISHU_APP_ID"))

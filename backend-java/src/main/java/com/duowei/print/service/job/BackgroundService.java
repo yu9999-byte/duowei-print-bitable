@@ -46,6 +46,10 @@ public class BackgroundService {
     @PreDestroy
     public void close() {
         worker.shutdownNow();
+        synchronized (tokens) {
+            tokens.clear();
+            expires.clear();
+        }
     }
 
     public ResponseEntity<?> submit(String signature, String token, ObjectNode body) {
@@ -63,8 +67,10 @@ public class BackgroundService {
         boolean existing = jobs.exists(key);
         jobs.createOrRetry(key, body.toString());
         String tenant = body.path("tenantKey").asText();
-        tokens.put(tenant, token.trim());
-        expires.put(tenant, System.currentTimeMillis() + 5400000);
+        synchronized (tokens) {
+            tokens.put(tenant, token.trim());
+            expires.put(tenant, System.currentTimeMillis() + 5400000);
+        }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("jobId", key);
         result.put("status", jobs.status(key));
@@ -138,10 +144,9 @@ public class BackgroundService {
                 JsonNode body = normalizeSubmission((ObjectNode) persisted);
                 String jobId = String.valueOf(row.get("job_id"));
                 String taskKey = body.path("taskKey").asText();
-                int attempt =
-                        row.get("attempt") == null
-                                ? 0
-                                : Integer.parseInt(String.valueOf(row.get("attempt")));
+                  if (!(row.get("attempt") instanceof Number))
+                      throw new IllegalStateException("后台任务持久化尝试次数无效");
+                  int attempt = Integer.parseInt(String.valueOf(row.get("attempt")));
                 String status = row.get("status") == null ? "" : String.valueOf(row.get("status"));
                 if (!jobId.equals(taskKey)
                         || !jobId.equals(row.get("task_key"))
@@ -149,11 +154,22 @@ public class BackgroundService {
                         || !Arrays.asList("queued", "processing").contains(status))
                     throw new IllegalStateException("后台任务持久化行无效");
                 String tenant = body.path("tenantKey").asText();
-                if (expires.getOrDefault(tenant, 0L) > System.currentTimeMillis())
-                    process(jobId, body, tokens.get(tenant));
+                String token = tokenFor(tenant);
+                if (token != null) process(jobId, body, token);
             }
         } catch (Exception e) {
             System.err.println("后台任务扫描失败：" + e.getClass().getSimpleName());
+        }
+    }
+
+    private String tokenFor(String tenant) {
+        synchronized (tokens) {
+            if (expires.getOrDefault(tenant, 0L) <= System.currentTimeMillis()) {
+                tokens.remove(tenant);
+                expires.remove(tenant);
+                return null;
+            }
+            return tokens.get(tenant);
         }
     }
 
@@ -190,9 +206,18 @@ public class BackgroundService {
                                                         : "&page_token=" + FeishuClient.enc(page)),
                                         token)
                                 .path("data");
-                data.path("items").forEach(f -> fields.put(f.path("field_id").asText(), f));
+                if (!data.isObject() || !data.path("items").isArray())
+                    throw new IllegalStateException("读取字段列表返回格式无效");
+                data.path("items")
+                        .forEach(
+                                f -> {
+                                    if (f.isObject()
+                                            && f.path("field_id").isTextual()
+                                            && f.path("field_name").isTextual())
+                                        fields.put(f.path("field_id").asText(), f);
+                                });
                 page =
-                        data.path("has_more").asBoolean()
+                        data.path("has_more").isBoolean() && data.path("has_more").booleanValue()
                                 ? Protocol.required(data, "page_token")
                                 : "";
             } while (!page.isEmpty());
@@ -201,11 +226,11 @@ public class BackgroundService {
                     status = fields.get(targets.path("statusFieldId").asText()),
                     error = fields.get(targets.path("errorFieldId").asText());
             if (attachment == null
-                    || attachment.path("type").asInt() != 17
+                    || attachment.path("type").asDouble(Double.NaN) != 17
                     || status == null
-                    || status.path("type").asInt() != 1
+                    || status.path("type").asDouble(Double.NaN) != 1
                     || targets.has("errorFieldId")
-                            && (error == null || error.path("type").asInt() != 1))
+                            && (error == null || error.path("type").asDouble(Double.NaN) != 1))
                 throw new IllegalArgumentException("选择的字段不存在或类型已变化");
             statusName = Protocol.required(status, "field_name");
             errorName = error == null ? null : Protocol.required(error, "field_name");
@@ -224,14 +249,18 @@ public class BackgroundService {
             form.add("parent_type", "bitable_file");
             form.add("parent_node", b.path("baseToken").asText());
             form.add("size", String.valueOf(a.bytes.length));
+            HttpHeaders fileHeaders = new HttpHeaders();
+            fileHeaders.setContentType(MediaType.parseMediaType(a.contentType));
             form.add(
                     "file",
-                    new ByteArrayResource(a.bytes) {
-                        @Override
-                        public String getFilename() {
-                            return a.fileName;
-                        }
-                    });
+                    new HttpEntity<>(
+                            new ByteArrayResource(a.bytes) {
+                                @Override
+                                public String getFilename() {
+                                    return a.fileName;
+                                }
+                            },
+                            fileHeaders));
             JsonNode upload =
                     api.call(
                             "https://open.feishu.cn/open-apis/drive/v1/medias/upload_all",

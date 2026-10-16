@@ -7,6 +7,21 @@ import org.junit.jupiter.api.Test;
 
 class ProtocolTest {
     @Test
+    void matchesNodeCompleteHmacTokenVector() {
+        byte[] key = new byte[32];
+        java.util.Arrays.fill(key, (byte) 42);
+        com.fasterxml.jackson.databind.node.ObjectNode claims = Protocol.JSON.createObjectNode();
+        claims.put("version", 1);
+        claims.put("issuedAt", 1000000000000L);
+        claims.put("expiresAt", 2000000000000L);
+        claims.put("bodyDigest", "vector");
+        claims.put("audience", "test");
+        assertEquals(
+                "test-v1.eyJhdWRpZW5jZSI6InRlc3QiLCJib2R5RGlnZXN0IjoidmVjdG9yIiwiZXhwaXJlc0F0IjoyMDAwMDAwMDAwMDAwLCJpc3N1ZWRBdCI6MTAwMDAwMDAwMDAwMCwidmVyc2lvbiI6MX0.UommDOzW0GLgXRPfLEFj0lRbOR0pzo4JZvkfQQFe5Zs",
+                Protocol.sign("test-v1", claims, key));
+    }
+
+    @Test
     void rejectsSignedFractionalAndStringVersions() {
         byte[] key = new byte[32];
         com.fasterxml.jackson.databind.node.ObjectNode body = Protocol.JSON.createObjectNode();

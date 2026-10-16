@@ -8,6 +8,14 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 
 class ConfigurationTest {
+    @Test
+    void rejectsCommaOnlyOriginConfiguration() {
+        Map<String, String> values = valid();
+        values.put("DUOWEI_ALLOWED_ORIGINS", ",,,");
+        assertThrows(
+                IllegalStateException.class, () -> new AutomationConfiguration(values).validate());
+    }
+
     private Map<String, String> valid() {
         Map<String, String> v = new HashMap<>();
         v.put("DUOWEI_SERVICE_AUTHORIZATION", "Bearer test-only");

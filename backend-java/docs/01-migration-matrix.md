@@ -37,12 +37,12 @@
 | automation-config.test.ts | ConfigurationTest | URL与密钥边界逐例对照 |
 | automation-openapi.controller.test.ts | RegistryContractTest、RenderContractTest、RequestErrorContractTest | 全部路由及错误响应 |
 | automation-bridge-document.test.ts | BridgeContractTest | 已覆盖静态页面契约；真实浏览器消息与恢复同步仍待验 |
-| browser-runtime.test.ts | RenderEnvelopeTest、RenderCacheTest | 启动诊断、独立页面、失败清理及真实浏览器 |
+| browser-runtime.test.ts | RenderEnvelopeTest、RenderCacheTest、RenderTimeoutTest | 已覆盖模拟超时、取消、关闭及重试；启动诊断、独立页面与真实浏览器清理仍待验 |
 | registry-row.test.ts | TemplateRowTest、RegistryServiceTest | 已覆盖读取映射；真实数据库往返及敏感快照异常仍待验 |
 | feishu-session-identity.test.ts | OAuthFailureTest仅部分相关 | 身份字段与编辑权限全部分支 |
 | background-job-row.test.ts | BackgroundRepositoryTest、BackgroundProcessingTest | 全部持久化状态与输入校验 |
 | background-job.test.ts | BackgroundValidationTest、BackgroundProcessingTest | 状态机、重复请求及全部失败阶段 |
 | feishu-oauth-session.test.ts | OAuthFailureTest | PKCE/state/session全部原断言 |
-| feishu-background-ports.test.ts | MarketplaceTokenTest、EventServiceTest、BackgroundProcessingTest | 临时令牌到期与上传边界 |
+| feishu-background-ports.test.ts | MarketplaceTokenTest、EventServiceTest、BackgroundProcessingTest、TenantCredentialTest | 已覆盖临时令牌过期清理、异常字段及20MiB上传边界模拟测试；真实上传仍待验 |
 
 补充Java测试：ProtocolTest、RenderNormalizationTest、RequestPolicyTest、AppTicketRepositoryTest。数据库集成、真实浏览器和真实飞书仍独立验收。

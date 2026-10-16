@@ -68,6 +68,7 @@ public class AutomationConfiguration {
                 throw new IllegalStateException("允许来源必须为HTTPS origin");
             result.add(uri.getScheme() + "://" + uri.getAuthority());
         }
+        if (result.isEmpty()) throw new IllegalStateException("至少需要一个允许来源");
         return Collections.unmodifiableSet(result);
     }
 

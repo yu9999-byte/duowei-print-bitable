@@ -31,14 +31,16 @@ public class AutomationController {
     }
 
     @GetMapping({"/api/automation/oauth/start", "/openapi/duowei-print/oauth/start"})
-    public ResponseEntity<?> start(@RequestParam String state) {
-        return oauth.start(state);
+    public ResponseEntity<?> start(@RequestParam(defaultValue = "") String state) {
+        return oauth.start(state.trim());
     }
 
     @GetMapping({"/api/automation/oauth/callback", "/openapi/duowei-print/oauth/callback"})
     public ResponseEntity<?> callback(
-            @RequestParam String state, @RequestParam(defaultValue = "") String code) {
-        return oauth.callback(state, code);
+            @RequestParam(defaultValue = "") String state,
+            @RequestParam(defaultValue = "") String code,
+            @RequestParam(defaultValue = "") String error) {
+        return oauth.callback(state.trim(), error.isEmpty() ? code.trim() : "");
     }
 
     @PostMapping("/openapi/duowei-print/background-jobs")
