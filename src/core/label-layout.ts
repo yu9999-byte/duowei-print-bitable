@@ -1,5 +1,9 @@
 import type { PrintJob } from "./print-job.ts";
-import { getDocumentVariables, prepareTemplateForOutput } from "./data-sources.ts";
+import {
+  createPrintJobDataSourceTokenCodec,
+  getDocumentVariables,
+  prepareTemplateForOutput,
+} from "./data-sources.ts";
 
 type Element = Record<string, unknown>;
 type LabelLayout = {
@@ -91,11 +95,12 @@ export function prepareLabelLayout(template: unknown, job: PrintJob): LabelLayou
   }
   if (!labelElements) throw new Error("标签首格没有可打印元素");
 
-  const first = prepareTemplateForOutput(source, getDocumentVariables(job, 0));
+  const codec = createPrintJobDataSourceTokenCodec(job, source);
+  const first = prepareTemplateForOutput(source, getDocumentVariables(job, 0), codec);
   const variables = {
     ...first.variables,
     [key]: job.documents.map((_, index) =>
-      prepareTemplateForOutput(source, getDocumentVariables(job, index)).variables),
+      prepareTemplateForOutput(source, getDocumentVariables(job, index), codec).variables),
   };
   const capacity = Number(rows) * Number(cols);
   return {

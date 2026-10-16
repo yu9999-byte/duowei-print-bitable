@@ -9,6 +9,8 @@ export type StoredTemplate = {
   template: unknown;
   checksum: string;
   updatedAt: string;
+  // Record identities belong to the selected template, never to its printable canvas.
+  savedBatchRecordIds?: string[];
 };
 
 export type TemplateContext = {
@@ -23,8 +25,9 @@ export type SaveTemplateOptions = {
 export type TemplateRepository = {
   list(context: TemplateContext): Promise<TemplateCollection>;
   upsert(context: TemplateContext, template: unknown, options: {
-    id: string; name: string; expectedRevision: string | null;
+    id: string; name: string; expectedRevision: string | null; savedBatchRecordIds?: string[];
   }): Promise<TemplateCollection>;
+  setBatchRecords(context: TemplateContext, id: string, recordIds: string[], expectedRevision: string | null): Promise<TemplateCollection>;
   rename(context: TemplateContext, id: string, name: string, expectedRevision: string | null): Promise<TemplateCollection>;
   remove(context: TemplateContext, id: string, expectedRevision: string | null): Promise<TemplateCollection>;
   setDefault(context: TemplateContext, id: string, expectedRevision: string | null): Promise<TemplateCollection>;
@@ -255,6 +258,12 @@ function parseCollection(raw: unknown, context: TemplateContext): TemplateCollec
       throw new Error("模板集合条目无效");
     }
     ids.add(item.id);
+    if (item.savedBatchRecordIds !== undefined && (!Array.isArray(item.savedBatchRecordIds)
+      || item.savedBatchRecordIds.length > 50
+      || item.savedBatchRecordIds.some((id) => typeof id !== "string" || !id.trim())
+      || new Set(item.savedBatchRecordIds).size !== item.savedBatchRecordIds.length)) {
+      throw new Error("模板保存的打印记录无效");
+    }
     const sanitized = sanitizeTemplate(item.template);
     assertTemplateShape(sanitized);
     if (canonicalJson(sanitized) !== canonicalJson(item.template)) {
@@ -327,14 +336,33 @@ export function createTemplateRepository(
       assertTemplateShape(sanitized);
       if (!options.id.trim() || !options.name.trim()) throw new Error("模板 ID 和名称不能为空");
       return mutate(context, options.expectedRevision, (collection) => {
+        const existing = collection.templates.find((entry) => entry.id === options.id);
+        const recordIds = options.savedBatchRecordIds ?? existing?.savedBatchRecordIds;
+        if (recordIds !== undefined && (recordIds.length > 50
+          || recordIds.some((id) => typeof id !== "string" || !id.trim())
+          || new Set(recordIds).size !== recordIds.length)) {
+          throw new Error("模板保存的打印记录无效");
+        }
         const item: StoredTemplate = {
           id: options.id, name: options.name.trim(), template: sanitized,
           checksum: checksum(sanitized), updatedAt: now().toISOString(),
+          ...(recordIds === undefined ? {} : { savedBatchRecordIds: [...recordIds] }),
         };
         const index = collection.templates.findIndex((entry) => entry.id === options.id);
         if (index < 0) collection.templates.push(item);
         else collection.templates[index] = item;
         collection.defaultId ??= options.id;
+      });
+    },
+    async setBatchRecords(context, id, recordIds, expectedRevision) {
+      if (recordIds.length > 50 || recordIds.some((value) => typeof value !== "string" || !value.trim())
+        || new Set(recordIds).size !== recordIds.length) {
+        throw new Error("模板保存的打印记录无效");
+      }
+      return mutate(context, expectedRevision, (collection) => {
+        const item = requireItem(collection, id);
+        item.savedBatchRecordIds = [...recordIds];
+        item.updatedAt = now().toISOString();
       });
     },
     rename(context, id, name, expectedRevision) {

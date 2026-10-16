@@ -1,4 +1,6 @@
 node_modules/
+automation-service/dist/
+automation-service/.tmp/
 .codex-tmp/
 record-view/dist/
 
@@ -31,6 +33,7 @@ artifacts/default-print-profile/
 
 # Reproducible browser fixture bundles and local inspection reports
 artifacts/linked-engine/
+artifacts/component-engine/
 outputs/**/*.inspect.ndjson
 
 # Editor and operating system files
@@ -38,3 +41,21 @@ outputs/**/*.inspect.ndjson
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Generated automation packages and local debug output
+automation-block/output/
+automation-block/.deploy-project/
+*.tgz
+automation-service/debug-renderer.png
+
+# Separate Miaoda repository; see docs/repository-sync.md
+/miaoda-duowei-automation/
+
+# Keep written acceptance evidence, exclude new local capture/build artifacts.
+# Already tracked evidence remains versioned.
+/artifacts/**
+!/artifacts/**/
+!/artifacts/**/*.md
+
+# Dependencies remain ignored under evidence directories
+**/node_modules/

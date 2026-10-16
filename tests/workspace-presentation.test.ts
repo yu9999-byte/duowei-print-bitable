@@ -117,7 +117,7 @@ test("CT-UX-05/09: template switching remains behind the unsaved-draft guard", (
   assert.match(source, /@click="requestTemplateSelection\(item\.id\)"/);
 });
 
-test("SPEC-BATCH-08: switching or creating templates cannot carry another template's batch", () => {
+test("BUG-BATCH-SAVE: switching templates restores only that template's saved records", () => {
   const source = readFileSync("src/App.vue", "utf8");
   const switchFlow = source.slice(
     source.indexOf("async function selectTemplate"),
@@ -127,11 +127,13 @@ test("SPEC-BATCH-08: switching or creating templates cannot carry another templa
     source.indexOf("async function createTemplate"),
     source.indexOf("async function changeBatchLayout"),
   );
-  for (const flow of [switchFlow, createFlow]) {
-    assert.match(flow, /shouldExitBatchOnTemplateSwitch/);
-    assert.match(flow, /loadPrintJob\(active, currentIds\)/);
-    assert.match(flow, /createSinglePrintSession\(active\.recordId\)/);
-  }
+  assert.match(switchFlow, /target\?\.savedBatchRecordIds/);
+  assert.match(switchFlow, /loadPrintJob\(active, savedIds\)/);
+  assert.match(switchFlow, /commitBatchPrintSession/);
+  assert.match(switchFlow, /createSinglePrintSession\(active\.recordId\)/);
+  assert.match(createFlow, /shouldExitBatchOnTemplateSwitch/);
+  assert.match(createFlow, /loadPrintJob\(active, currentIds\)/);
+  assert.match(createFlow, /createSinglePrintSession\(active\.recordId\)/);
 });
 
 test("CT-UX-08/09: App shell removes the old duplicated and native-looking controls", () => {

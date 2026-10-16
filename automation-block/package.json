@@ -1,0 +1,19 @@
+{
+  "name": "duowei-print-automation-block",
+  "private": true,
+  "version": "0.1.0",
+  "description": "多维打印自动化操作",
+  "main": "index.js",
+  "scripts": {
+    "build": "node scripts/stage.mjs build",
+    "upload": "node scripts/stage.mjs upload"
+  },
+  "dependencies": {
+    "@lark-opdev/block-basekit-server-api": "1.0.6",
+    "@lark-opdev/cli": "^3.4.4"
+  },
+  "devDependencies": {
+    "@lark-opdev/block-basekit-cli": "1.0.5",
+    "esbuild": "^0.25.10"
+  }
+}

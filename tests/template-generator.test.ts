@@ -184,6 +184,11 @@ test("SPEC-LINK-03: an empty linked table has a separate variable-driven empty s
     id: fieldDataSourceId("lines"),
     label: "明细",
     isArray: true,
+    columns: job.table.fields.find((field) => field.id === "lines")!.arrayColumns,
+    children: [
+      { id: "__duowei_field_lines.product", label: "明细.产品" },
+      { id: "__duowei_field_lines.qty", label: "明细.数量" },
+    ],
   });
   assert.ok(!template.ext.availableVariables
     .flatMap((group) => group.children)

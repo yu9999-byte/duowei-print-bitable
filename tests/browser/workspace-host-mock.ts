@@ -92,6 +92,25 @@ const fields = [
   { id: "fldAddress", name: "收货地址", type: 1 },
 ];
 
+const showDetails = query.get("details") === "1";
+const detailMeta = [
+  { id: "lineProduct", name: "商品名称", type: 1 },
+  { id: "lineQty", name: "数量", type: 2 },
+  { id: "linePrice", name: "单价", type: 2 },
+];
+if (showDetails) fields.push(
+  { id: "fldLines", name: "商品明细", type: 18, property: { tableId: "tblLines", multiple: true } } as any,
+  { id: "fldPayments", name: "收款记录", type: 21, property: { tableId: "tblLines", multiple: true } } as any,
+);
+const detailTable = {
+  async getViewList() { return [{ async getFieldMetaList() { return detailMeta; } }]; },
+  async getRecordById() { return { fields: {} }; },
+  async getFieldById(id: string) { return { async getCellString(recordId: string) {
+    const suffix = recordId.endsWith("2") ? 2 : 1;
+    return id === "lineProduct" ? ["热敏标签纸", "条码扫描器"][suffix - 1] : id === "lineQty" ? String(suffix * 2) : "128.00";
+  } }; },
+};
+
 const table = {
   async getFieldMetaList() {
     return fields;
@@ -100,7 +119,10 @@ const table = {
     return "订单管理";
   },
   async getRecordById(recordId: string) {
-    return { fields: records[recordId] ?? {} };
+    return { fields: { ...records[recordId], ...(showDetails ? {
+      fldLines: { tableId: "tblLines", recordIds: ["line1", "line2"] },
+      fldPayments: { tableId: "tblLines", recordIds: ["line1"] },
+    } : {}) } };
   },
   async getViewMetaList() {
     return [];
@@ -137,8 +159,8 @@ export const bitable = {
     async getSelection() {
       return selection;
     },
-    async getTable() {
-      return table;
+    async getTable(tableId?: string) {
+      return tableId === "tblLines" ? detailTable : table;
     },
     onSelectionChange() {
       return () => undefined;

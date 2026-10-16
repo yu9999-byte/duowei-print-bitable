@@ -27,6 +27,25 @@ test("SPEC-SEC-01: production code does not write business data to console or br
 });
 
 test("SPEC-SEC-01: production code does not construct direct Authorization headers", () => {
-  assert.deepEqual(matches(/["']authorization["']\s*:/gi), []);
-  assert.deepEqual(matches(/\bBearer\s+\$\{/g), []);
+  const authorizationHeaders = matches(/["']authorization["']\s*:/gi);
+  const bearerTemplates = matches(/\bBearer\s+\$\{/g);
+  const allowedServerBoundaries = [
+    "src\\automation\\feishu-action-adapters.ts",
+    "src\\automation\\feishu-background-ports.ts",
+    "src\\automation\\feishu-oauth-session.ts",
+  ];
+  assert.equal(authorizationHeaders.length, 1);
+  assert.equal(bearerTemplates.length, 6);
+  assert.deepEqual([...new Set(authorizationHeaders.map((item) => item.replace(/:\d+$/, "")))], [allowedServerBoundaries[0]]);
+  assert.deepEqual([...new Set(bearerTemplates.map((item) => item.replace(/:\d+$/, "")))], allowedServerBoundaries);
+  const adapter = readFileSync(allowedServerBoundaries[0], "utf8");
+  assert.match(adapter, /https:\/\/open\.feishu\.cn\/open-apis\/base\/v3\/bases/);
+  assert.doesNotMatch(adapter, /rendererEndpoint[\s\S]{0,500}tenantAccessToken/);
+  const backgroundPorts = readFileSync(allowedServerBoundaries[1], "utf8");
+  assert.match(backgroundPorts, /https:\/\/open\.feishu\.cn\/open-apis\/bitable\/v1\/apps/);
+  assert.match(backgroundPorts, /https:\/\/open\.feishu\.cn\/open-apis\/drive\/v1\/medias\/upload_all/);
+  const oauth = readFileSync(allowedServerBoundaries[2], "utf8");
+  assert.match(oauth, /https:\/\/accounts\.feishu\.cn\/oauth\/v3\/token/);
+  assert.match(oauth, /https:\/\/open\.feishu\.cn\/open-apis\/authen\/v1\/user_info/);
+  assert.match(oauth, /https:\/\/open\.feishu\.cn[\s\S]*?drive\/v1\/permissions/);
 });

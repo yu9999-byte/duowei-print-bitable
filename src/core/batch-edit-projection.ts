@@ -397,9 +397,8 @@ function extractContinuousInstances(current: JsonRecord, projection: BatchEditPr
     const currentSize = current.canvasSize as JsonRecord | undefined;
     output.canvasSize = {
       width: currentSize?.width ?? projection.baseTemplate.canvasSize?.width,
-      height: typeof currentSize?.height === "number"
-        ? currentSize.height / projection.recordIds.length
-        : height,
+      // The compact edit canvas is a projection, never the saved paper size.
+      height: projection.baseTemplate.canvasSize.height,
     };
     output.pages = [restorePage(page, elements
       .map((element) => restoreElement(element, 0, recordIndex * height))

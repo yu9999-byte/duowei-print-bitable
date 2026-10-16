@@ -1,12 +1,16 @@
 import "vue-print-designer";
 import "vue-print-designer/style.css";
-import { generateTemplate } from "../../src/core/template-generator.ts";
+import { generateTemplate, generateBlankTemplate } from "../../src/core/template-generator.ts";
+import { buildDataSourceClipboardPayload, detailFieldDataSourceId, createPrintJobDataSourceTokenCodec } from "../../src/core/data-sources.ts";
 import {
   bindPrintJob,
   composeBrowserPrintDocument,
   composeRenderedPrintPages,
   getPrintJobPdfBlob,
   renderPrintJobPages,
+  getPersistentTemplateData,
+  rememberCopiedDataSource,
+  installDataSourceEditingLifecycle,
   type DesignerElement,
 } from "../../src/engine/designer-adapter.ts";
 import type { PrintJob } from "../../src/core/print-job.ts";
@@ -159,6 +163,59 @@ async function runBatchCase() {
   return { pageCounts: rendered.pageCounts, pages: pages.length, rows: firstRows.length + secondRows.length, pdfSize: pdf.size };
 }
 
+async function runCopiedDetailCellsCase() {
+  const rows = detailRows("PASTE", 96);
+  const job = createJob([{ recordId: "paste", order: "PASTE-ORDER", rows }]);
+  const template = generateBlankTemplate(job);
+  template.pages[0].elements.push({
+    id: "manual-table", type: "table", x: 48, y: 48, width: 698, height: 220,
+    columns: [{ field: "a", header: "行号" }, { field: "b", header: "商品" }],
+    data: [{ a: "", b: "" }], showHeader: true, autoPaginate: true,
+    printable: true, style: { rowHeight: 32, headerHeight: 36, borderColor: "#9ca3af" },
+  });
+  await bindPrintJob(designer, template, job);
+  const stop = installDataSourceEditingLifecycle(designer);
+  try {
+    for (const [cellField, targetField] of [["a", "行号"], ["b", "商品"]]) {
+      const source = { id: detailFieldDataSourceId("lines", targetField), label: `订单明细.${targetField}` };
+      const payload = buildDataSourceClipboardPayload(source);
+      rememberCopiedDataSource(designer, payload);
+      const cell = designer.shadowRoot!.querySelector<HTMLElement>(`td[data-field="${cellField}"][data-row-index="0"]`);
+      if (!cell) throw new Error(`找不到可编辑表格单元格：${cellField}`);
+      cell.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, composed: true, button: 0 }));
+      cell.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, composed: true, button: 0 }));
+      cell.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, composed: true }));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const input = designer.shadowRoot!.querySelector<HTMLTextAreaElement>(`td[data-field="${cellField}"][data-row-index="0"] textarea`);
+      if (!input) throw new Error("双击表格单元格没有进入原生编辑状态");
+      input.focus();
+      const clipboard = new DataTransfer();
+      clipboard.setData("text/plain", payload.text);
+      input.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, composed: true, clipboardData: clipboard }));
+      input.setRangeText(payload.text, 0, input.value.length, "end");
+      input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      input.blur();
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    const saved = getPersistentTemplateData(designer) as any;
+    const table = saved.pages[0].elements[0];
+    if (!table.detailTemplateRows?.[0]?.a?.startsWith("@__duowei_field_")) throw new Error("复制粘贴未形成持久化循环字段绑定");
+    if (JSON.stringify(saved).includes("PASTE-001")) throw new Error("业务明细泄漏到模板");
+    const codec = createPrintJobDataSourceTokenCodec(job);
+    if (codec.toEditingContent(table.detailTemplateRows[0].b).content !== "@订单明细.商品") throw new Error("明细列显示名称错误");
+    await bindPrintJob(designer, saved, job);
+    const rendered = await renderPrintJobPages(designer, job);
+    const pages = printedPages(rendered);
+    assertRowsExactlyOnce(pages, rows);
+    if (pages.length < 3 || pages.some((page) => !page.textContent?.includes("行号"))) throw new Error("手工循环表格未正确跨页或重复表头");
+    const pdf = await getPrintJobPdfBlob(designer, job, "detail-manual.pdf");
+    if (pdf.size < 1000) throw new Error("循环字段 PDF 为空");
+    await saveArtifact("detail-manual", "pdf", pdf);
+    await saveArtifact("detail-manual", "html", composeBrowserPrintDocument(rendered));
+    return { rows: rows.length, pages: pages.length, pdfBytes: pdf.size, copiedCells: 2 };
+  } finally { stop(); }
+}
+
 async function run() {
   await customElements.whenDefined("print-designer");
   if (!designer.isReady) {
@@ -169,6 +226,7 @@ async function run() {
     one: await runSingleRowCase(),
     long: await runLongCase(),
     batch: await runBatchCase(),
+    copiedCells: await runCopiedDetailCellsCase(),
   };
 }
 

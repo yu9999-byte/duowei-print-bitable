@@ -1,25 +1,23 @@
-import { isDetailLinkField, type PrintJob } from "../core/print-job.ts";
+import type { PrintJob } from "../core/print-job.ts";
 import { renderWhenVisible } from "./preview-visibility.ts";
 import { generateTemplate } from "../core/template-generator.ts";
 import { hasNativeLabelGrid, prepareLabelLayout } from "../core/label-layout.ts";
 import { hasContinuousLayout, prepareContinuousLayout } from "../core/continuous-layout.ts";
 import {
-  createDataSourceTokenCodec,
   type DataSourceTokenCodec,
-  type DataSourceTokenDefinition,
   type PastedDataSourceBinding,
 } from "../core/data-source-token-codec.ts";
 import {
   buildDataSourceCatalog,
-  fieldDataSourceId,
+  createPrintJobDataSourceTokenCodec,
   getDocumentVariables,
   prepareTemplateForOutput,
   refreshTemplateDataSources,
-  SYSTEM_PRINT_DATE_ID,
   type DataSourceClipboardPayload,
   type DesignerDataSourceGroup,
 } from "../core/data-sources.ts";
 import { cloneJsonValue } from "../core/json-clone.ts";
+import { DETAIL_TEMPLATE_ROWS, detailTokensFromTemplate, mapDetailRowText, rowDetailSource } from "../core/detail-tables.ts";
 import {
   createBatchEditProjection,
   reconcileBatchEditProjection,
@@ -105,26 +103,6 @@ function templateElements(template: Record<string, unknown>) {
   return result;
 }
 
-function getHistoricalBindings(template: Record<string, unknown>): Record<string, string> {
-  const ext = template.ext;
-  if (!ext || typeof ext !== "object" || Array.isArray(ext)) return {};
-  const bindings = (ext as Record<string, unknown>).fieldBindings;
-  if (!bindings || typeof bindings !== "object" || Array.isArray(bindings)) return {};
-  return Object.fromEntries(Object.entries(bindings).filter((entry): entry is [string, string] =>
-    typeof entry[1] === "string"));
-}
-
-function getDataSourceDefinitions(job: PrintJob): DataSourceTokenDefinition[] {
-  return [
-    ...job.table.fields.map((field) => ({ id: fieldDataSourceId(field.id), label: field.name })),
-    { id: SYSTEM_PRINT_DATE_ID, label: "打印日期" },
-    ...job.table.fields.filter(isDetailLinkField).map((field) => ({
-      id: `__duowei_print_empty_${field.id}`,
-      label: `${field.name}（空数据提示）`,
-    })),
-  ];
-}
-
 function renderKey(element: Record<string, unknown>, index: number) {
   const raw = typeof element.id === "string" && element.id.trim() ? element.id : String(index);
   return `__duowei_render_${raw.replace(/[^A-Za-z0-9_.-]/g, "_")}`;
@@ -142,6 +120,12 @@ function toRuntimeTemplate(
   const runtime = cloneJsonValue(persistentTemplate);
   const runtimeValues = { ...state.values, ...state.projectionValues };
   templateElements(runtime).forEach((element, index) => {
+    if (element.type === "table" && Array.isArray(element[DETAIL_TEMPLATE_ROWS])) {
+      element.data = mapDetailRowText(element[DETAIL_TEMPLATE_ROWS] as Record<string, any>[],
+        (text) => state.codec.toEditingContent(text).content);
+      delete element.variable;
+      return;
+    }
     if (element.type !== "text") return;
     const content = typeof element.content === "string" ? element.content : "";
     const variable = typeof element.variable === "string" ? element.variable : "";
@@ -176,6 +160,32 @@ function toPersistentTemplate(
   const persistent = cloneJsonValue(runtimeTemplate);
   delete persistent.testData;
   templateElements(persistent).forEach((element) => {
+    if (element.type === "table" && Array.isArray(element.data)) {
+      const elementId = typeof element.id === "string" ? element.id : "";
+      const oldRows = Array.isArray(element[DETAIL_TEMPLATE_ROWS]) ? element[DETAIL_TEMPLATE_ROWS] : [];
+      const convertedRows = mapDetailRowText(element.data, (text, cellKey) => {
+        const [rowIndex, columnKey] = cellKey.split(":");
+        const oldCell = oldRows[Number(rowIndex)]?.[columnKey];
+        const converted = state.codec.toPersistentContent(text, {
+          previousContent: typeof oldCell === "string" ? oldCell : oldCell?.value ?? "",
+          pastedBindings: state.pendingBindings.get(`${elementId}:${cellKey}`) ?? [],
+        });
+        throwForBindingIssues(converted.issues);
+        return converted.content;
+      });
+      const definitions = detailTokensFromTemplate({ ext: state.persistentExt });
+      const hasLoop = convertedRows.some((row) => rowDetailSource(row, definitions));
+      if (hasLoop || Array.isArray(element[DETAIL_TEMPLATE_ROWS])) {
+        if (element.variable && !Array.isArray(element[DETAIL_TEMPLATE_ROWS])) {
+          throw new Error("请在未绑定数据的表格中粘贴明细字段，避免将已有业务数据保存为模板");
+        }
+        element[DETAIL_TEMPLATE_ROWS] = convertedRows;
+        element.data = [];
+        delete element.variable;
+        element.autoPaginate = true;
+      }
+      return;
+    }
     if (element.type !== "text") return;
     const managed = typeof element[RUNTIME_SOURCE_CONTENT] === "string";
     const previousContent = managed
@@ -271,7 +281,8 @@ function eventTextarea(event: Event): HTMLTextAreaElement | null {
   const target = (typeof event.composedPath === "function" ? event.composedPath()[0] : event.target) as
     | Element
     | null;
-  return target?.tagName === "TEXTAREA" && target.closest(".element-wrapper[data-element-id] [data-text-content]")
+  return target?.tagName === "TEXTAREA" && (target.closest(".element-wrapper[data-element-id] [data-text-content]")
+    || target.closest(".element-wrapper[data-element-id] td[data-field][data-row-index]"))
     ? target as HTMLTextAreaElement
     : null;
 }
@@ -311,18 +322,41 @@ export function installDataSourceEditingLifecycle(
     if (text !== currentState.clipboard.text) return;
     const elementId = textareaElementId(textarea);
     if (!elementId) return;
+    const cell = textarea.closest("td[data-field][data-row-index]");
+    if (cell && cell.getAttribute("data-section") === "footer") return;
+    const bindingKey = cell
+      ? `${elementId}:${cell.getAttribute("data-row-index")}:${cell.getAttribute("data-field")}` : elementId;
     const binding: PastedDataSourceBinding = {
       label: currentState.clipboard.label,
       token: currentState.clipboard.token,
       offset: textarea.selectionStart ?? undefined,
     };
-    currentState.pendingBindings.set(elementId, [
-      ...(currentState.pendingBindings.get(elementId) ?? []),
+    currentState.pendingBindings.set(bindingKey, [
+      ...(currentState.pendingBindings.get(bindingKey) ?? []),
       binding,
     ]);
   };
   const handleFocusOut = (event: Event) => {
     if (eventTextarea(event)) queueSynchronization();
+  };
+  // 1.7.39's table editor ref is an array inside v-for. Its native focus call
+  // can fail after rendering the textarea; focus the actual DOM editor instead.
+  const focusTimers = new Set<ReturnType<typeof setTimeout>>();
+  const handleTableDoubleClick = (event: Event) => {
+    const target = event.composedPath()[0];
+    if (!(target instanceof Element)) return;
+    const cell = target.closest("td[data-field][data-row-index]");
+    const wrapper = cell?.closest(".element-wrapper[data-element-id]");
+    if (!cell || !wrapper) return;
+    const selector = `.element-wrapper[data-element-id="${CSS.escape(wrapper.getAttribute("data-element-id")!)}"]`
+      + ` td[data-field="${CSS.escape(cell.getAttribute("data-field")!)}"][data-row-index="${cell.getAttribute("data-row-index")}"] textarea`;
+    const timer = setTimeout(() => {
+      focusTimers.delete(timer);
+      const editor = root.querySelector<HTMLTextAreaElement>(selector);
+      editor?.focus();
+      editor?.select();
+    }, 0);
+    focusTimers.add(timer);
   };
   const handleKeyDown = (event: Event) => {
     const textarea = eventTextarea(event);
@@ -356,10 +390,13 @@ export function installDataSourceEditingLifecycle(
   };
 
   root.addEventListener("paste", handlePaste, { capture: true });
+  root.addEventListener("dblclick", handleTableDoubleClick, { capture: true });
   root.addEventListener("focusout", handleFocusOut);
   root.addEventListener("keydown", handleKeyDown, { capture: true });
   return () => {
     root.removeEventListener("paste", handlePaste, { capture: true });
+    root.removeEventListener("dblclick", handleTableDoubleClick, { capture: true });
+    for (const timer of focusTimers) clearTimeout(timer);
     root.removeEventListener("focusout", handleFocusOut);
     root.removeEventListener("keydown", handleKeyDown, { capture: true });
     designerLifecycleOptions.delete(designer);
@@ -382,10 +419,7 @@ export async function bindPrintJob(designer: DesignerElement, template: unknown,
   const lifecycleOptions = designerLifecycleOptions.get(designer);
   const values = getDocumentVariables(job, 0);
   const state: DesignerDataSourceState = {
-    codec: createDataSourceTokenCodec(
-      getDataSourceDefinitions(job),
-      getHistoricalBindings(persistentTemplate),
-    ),
+    codec: createPrintJobDataSourceTokenCodec(job, persistentTemplate),
     persistentExt: cloneJsonValue(persistentTemplate.ext),
     values,
     runtimeValues: values,
@@ -418,10 +452,7 @@ export async function bindBatchEditProjection(
   const lifecycleOptions = designerLifecycleOptions.get(designer);
   const values = getDocumentVariables(job, 0);
   const state: DesignerDataSourceState = {
-    codec: createDataSourceTokenCodec(
-      getDataSourceDefinitions(job),
-      getHistoricalBindings(persistentTemplate),
-    ),
+    codec: createPrintJobDataSourceTokenCodec(job, persistentTemplate),
     persistentExt: cloneJsonValue(projection.template.ext),
     values,
     runtimeValues: values,
@@ -464,10 +495,7 @@ export async function synchronizeBatchEditProjection(designer: DesignerElement):
     model: binding.model,
   };
   const projection = createBatchEditProjection(binding.model.baseTemplate, binding.job, binding.layout);
-  state.codec = createDataSourceTokenCodec(
-    getDataSourceDefinitions(binding.job),
-    getHistoricalBindings(projection.baseTemplate),
-  );
+  state.codec = createPrintJobDataSourceTokenCodec(binding.job, projection.baseTemplate);
   state.persistentExt = cloneJsonValue(projection.template.ext);
   state.elementValues = projection.elementValues;
   state.projectionValues = projection.projectionValues;
@@ -634,10 +662,10 @@ function requireDocuments(job: PrintJob) {
   }
 }
 
-function getBatchItems(job: PrintJob, template?: unknown) {
+function getBatchItems(job: PrintJob, template?: unknown, codec?: DataSourceTokenCodec) {
   return job.documents.map((_, index) => ({
     variables: template
-      ? prepareTemplateForOutput(template, getDocumentVariables(job, index)).variables
+      ? prepareTemplateForOutput(template, getDocumentVariables(job, index), codec).variables
       : getDocumentVariables(job, index),
   }));
 }
@@ -668,7 +696,8 @@ async function withResolvedOutputTemplate<T>(
     return render();
   }
   const persistentTemplate = getPersistentTemplateData(designer);
-  const prepared = prepareTemplateForOutput(persistentTemplate, values);
+  const codec = designerDataSourceStates.get(designer)?.codec;
+  const prepared = prepareTemplateForOutput(persistentTemplate, values, codec);
   if (!hasOutputTemplateChanges(persistentTemplate, prepared.template)) {
     await designer.setVariables(values);
     return render();
@@ -704,7 +733,8 @@ async function withResolvedBatchTemplate<T>(
   }
   const persistentTemplate = getPersistentTemplateData(designer);
   const firstValues = getDocumentVariables(job, 0);
-  const prepared = prepareTemplateForOutput(persistentTemplate, firstValues);
+  const codec = designerDataSourceStates.get(designer)?.codec;
+  const prepared = prepareTemplateForOutput(persistentTemplate, firstValues, codec);
   if (!hasOutputTemplateChanges(persistentTemplate, prepared.template)) {
     return render(getBatchItems(job));
   }
@@ -712,7 +742,7 @@ async function withResolvedBatchTemplate<T>(
     throw new Error("多字段批量输出模板无法加载");
   }
   try {
-    return await render(getBatchItems(job, persistentTemplate));
+    return await render(getBatchItems(job, persistentTemplate, codec));
   } finally {
     if (!loadTemplateData.call(designer, originalRuntimeTemplate)) {
       throw new Error("多字段批量输出后无法恢复编辑模板");

@@ -162,6 +162,74 @@ test("CT-DES-06: binding loads friendly editor content, resolved canvas data, an
   assert.ok(!JSON.stringify(saved).includes("PO-0001"));
 });
 
+test("CT-DES-08: renamed fields keep stable IDs while deleted and unreadable fields stay explicit", async () => {
+  const renamedToken = `@${fieldDataSourceId("renamed")}`;
+  const deletedToken = `@${fieldDataSourceId("deleted")}`;
+  const unreadableToken = `@${fieldDataSourceId("unreadable")}`;
+  let loadedTemplate: any;
+  let testData: Record<string, unknown> = {};
+  const previewValues: string[] = [];
+  const designer = {
+    loadTemplateData(template: unknown) { loadedTemplate = structuredClone(template); return true; },
+    getTemplateData() { return structuredClone(loadedTemplate); },
+    async setTestData(data: Record<string, unknown>) { testData = data; },
+    async setVariables(data: Record<string, unknown>) { testData = data; },
+    setAvailableVariables() {},
+    async getPreviewHtml() {
+      previewValues.push(String(testData.__duowei_render_lifecycle));
+      return "<div><div>field lifecycle</div></div>";
+    },
+  } as unknown as DesignerElement;
+  const job: PrintJob = {
+    source: { baseId: "base", tableId: "table", recordIds: ["rec-1", "rec-2"] },
+    table: { name: "订单", fields: [
+      { id: "renamed", name: "新字段名", type: "1" },
+      { id: "unreadable", name: "受限字段", type: "1" },
+    ] },
+    documents: [
+      { recordId: "rec-1", values: { 新字段名: "新值" } },
+      { recordId: "rec-2", values: { 新字段名: "第二值" } },
+    ],
+    generatedAt: "2026-10-12T02:00:00.000Z",
+  };
+  const persistent = {
+    pages: [{ id: "p", elements: [{
+      id: "lifecycle",
+      type: "text",
+      content: `改名：${renamedToken}；删除：${deletedToken}；不可读：${unreadableToken}`,
+      variable: renamedToken,
+    }] }],
+    canvasSize: { width: 794, height: 1123 },
+    ext: { fieldBindings: {
+      renamed: "旧字段名",
+      deleted: "已删除字段",
+      unreadable: "受限字段",
+    } },
+  };
+
+  await bindPrintJob(designer, persistent, job);
+
+  const runtimeElement = loadedTemplate.pages[0].elements[0];
+  assert.equal(runtimeElement.content,
+    "改名：@新字段名；删除：@已删除字段（字段已失效）；不可读：@受限字段");
+  assert.equal(testData[runtimeElement.variable.slice(1)],
+    "改名：新值；删除：[字段已失效：已删除字段]；不可读：[字段不可读取：受限字段]");
+
+  await getPrintPreviewHtml(designer, job);
+  assert.equal(testData.__duowei_render_lifecycle,
+    "改名：新值；删除：[字段已失效：已删除字段]；不可读：[字段不可读取：受限字段]");
+  assert.ok(!JSON.stringify(testData).includes("@__duowei_field_"));
+
+  await renderPrintJobPages(designer, job);
+  assert.deepEqual(previewValues.slice(-2), [
+    "改名：新值；删除：[字段已失效：已删除字段]；不可读：[字段不可读取：受限字段]",
+    "改名：第二值；删除：[字段已失效：已删除字段]；不可读：[字段不可读取：受限字段]",
+  ]);
+
+  const saved = getPersistentTemplateData(designer);
+  assert.equal((saved.pages as any)[0].elements[0].content, persistent.pages[0].elements[0].content);
+});
+
 test("CT-DES-06: locked engine contract exposes textarea edit and blur commit but no public edit lifecycle", () => {
   const bundle = readFileSync("node_modules/vue-print-designer/dist/web-component-zZPzxxzQ.js", "utf8");
   const types = readFileSync("node_modules/vue-print-designer/dist/web-component.d.ts", "utf8");
@@ -986,7 +1054,7 @@ test("SPEC-CONT-02/03: native continuous render uses one long page and restores 
     assert.equal(rendered.layout, "continuous");
     assert.deepEqual(rendered.pageCounts, [1]);
     assert.equal(rendered.pages.length, 1);
-    assert.equal(rendered.canvasHeight, template.canvasSize.height * 3);
+    assert.equal(rendered.canvasHeight, Math.min(template.canvasSize.height, Math.ceil(Math.max(...template.pages[0].elements.map((e: any) => e.y + e.height)) + 16)) * 3);
     assert.equal(isRenderedPrintJobCurrent(rendered, job, "continuous"), true);
     assert.equal(current, template);
     const blob = await getContinuousPrintJobPdfBlob(designer, job);

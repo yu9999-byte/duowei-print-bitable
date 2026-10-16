@@ -70,7 +70,7 @@ test("CT-BATCH-09-EDIT: continuous projection is one complete scrollable long ca
   const sourceHeight = source.canvasSize.height;
 
   assert.equal(projection.template.pages.length, 1);
-  assert.equal(projection.template.canvasSize.height, sourceHeight * 3);
+  assert.equal(projection.template.canvasSize.height, projection.recordHeight! * 3);
   assert.equal(projection.template.pages[0].elements.length, source.pages[0].elements.length * 3);
 
   const edited = structuredClone(projection.template) as any;
@@ -80,6 +80,7 @@ test("CT-BATCH-09-EDIT: continuous projection is one complete scrollable long ca
   const reconciled = reconcileBatchEditProjection(edited, projection);
   const sharedTitle = (reconciled.template.pages[0] as any).elements
     .find((element: any) => element.id === "continuous-title");
+  assert.equal(reconciled.template.canvasSize.height, sourceHeight);
   assert.equal(sharedTitle.x, (source.pages[0].elements[0] as any).x + 18);
 });
 
@@ -146,4 +147,21 @@ test("CT-LINK-BATCH-01: default projection isolates linked rows and reconciles o
   assert.equal(persisted.includes("rec-1"), false);
   assert.equal(persisted.includes("rec-2"), false);
   assert.equal(JSON.stringify(reconciled.template).includes("__duowei_batch"), false);
+});
+
+
+test("compact continuous edit keeps A4 paper when saved and switched back to default", () => {
+  const source = generateContinuousTemplate(job());
+  source.canvasSize.height = 1123;
+  const projection = createBatchEditProjection(source, job(), "continuous");
+  assert.ok(projection.recordHeight! < 1123);
+  assert.equal(reconcileBatchEditProjection(projection.template, projection).changed, false);
+  const edited = structuredClone(projection.template) as any;
+  const title = edited.pages[0].elements.find((e: any) => e.__duoweiBatchRecordIndex === 1);
+  title.x += 5;
+  const saved = reconcileBatchEditProjection(edited, projection).template;
+  assert.equal(saved.canvasSize.height, 1123);
+  const defaults = createBatchEditProjection(saved, job(), "default");
+  assert.equal(defaults.template.pages.length, 3);
+  assert.equal(defaults.template.canvasSize.height, 1123);
 });

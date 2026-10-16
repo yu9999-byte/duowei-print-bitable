@@ -1,5 +1,9 @@
 import type { PrintJob } from "./print-job.ts";
-import { getDocumentVariables, prepareTemplateForOutput } from "./data-sources.ts";
+import {
+  createPrintJobDataSourceTokenCodec,
+  getDocumentVariables,
+  prepareTemplateForOutput,
+} from "./data-sources.ts";
 import { cloneJsonValue } from "./json-clone.ts";
 
 type Element = Record<string, unknown>;
@@ -79,11 +83,17 @@ export function prepareContinuousLayout(template: unknown, job: PrintJob): Conti
     assertFixedElement(element as Element, size.width, size.height);
   }
 
-  const finalHeight = size.height * job.documents.length;
+  // Keep component coordinates (including footers) intact, but do not repeat
+  // unused paper below them. A small trailing inset separates record blocks.
+  const contentBottom = Math.max(...sourceElements.map((element: Element) =>
+    Number(element.y) + Number(element.height)));
+  const recordHeight = Math.min(size.height, Math.ceil(contentBottom + 16));
+  const finalHeight = recordHeight * job.documents.length;
   if (!Number.isFinite(finalHeight) || finalHeight <= 0) {
     throw new Error("连续纸最终高度无效");
   }
-  const first = prepareTemplateForOutput(source, getDocumentVariables(job, 0));
+  const codec = createPrintJobDataSourceTokenCodec(job, source);
+  const first = prepareTemplateForOutput(source, getDocumentVariables(job, 0), codec);
   const output = cloneJsonValue(first.template) as Record<string, unknown>;
   output.canvasSize = { width: size.width, height: finalHeight };
   const outputPages = output.pages as Array<{ id?: string; elements?: Element[] }>;
@@ -95,7 +105,7 @@ export function prepareContinuousLayout(template: unknown, job: PrintJob): Conti
       x: 0,
       y: 0,
       width: size.width,
-      height: size.height,
+      height: recordHeight,
       rows: job.documents.length,
       cols: 1,
       gapX: 0,
@@ -118,13 +128,13 @@ export function prepareContinuousLayout(template: unknown, job: PrintJob): Conti
     variables: {
       ...first.variables,
       __duowei_continuous_rows: job.documents.map((_, index) =>
-        prepareTemplateForOutput(source, getDocumentVariables(job, index)).variables),
+        prepareTemplateForOutput(source, getDocumentVariables(job, index), codec).variables),
     },
     variableKey: "__duowei_continuous_rows",
     pageCount: 1,
     recordIds: job.documents.map((document) => document.recordId),
     canvasWidth: size.width,
     canvasHeight: finalHeight,
-    recordHeight: size.height,
+    recordHeight,
   };
 }

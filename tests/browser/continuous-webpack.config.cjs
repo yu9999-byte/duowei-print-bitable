@@ -19,21 +19,21 @@ module.exports = {
     setupMiddlewares(middlewares, server) {
       server.app.post("/__test/html", (request, response) => {
         const count = String(request.query.count ?? "");
-        if (count !== "3") {
+        if (!["2", "3", "10", "50"].includes(count)) {
           response.sendStatus(400);
           return;
         }
         const chunks = [];
         request.on("data", (chunk) => chunks.push(chunk));
         request.on("end", () => {
-          const output = path.resolve(__dirname, `../../artifacts/continuous-print-${count}.html`);
+          const output = path.resolve(__dirname, `../../artifacts/continuous-compact-print-${count}.html`);
           fs.writeFileSync(output, Buffer.concat(chunks));
           response.sendStatus(204);
         });
       });
       server.app.post("/__test/pdf", (request, response) => {
         const count = String(request.query.count ?? "");
-        if (count !== "3") {
+        if (!["2", "3", "10", "50"].includes(count)) {
           response.sendStatus(400);
           return;
         }
@@ -45,7 +45,7 @@ module.exports = {
           else chunks.push(chunk);
         });
         request.on("end", () => {
-          const output = path.resolve(__dirname, `../../artifacts/continuous-engine-${count}.pdf`);
+          const output = path.resolve(__dirname, `../../artifacts/continuous-compact-engine-${count}.pdf`);
           fs.writeFileSync(output, Buffer.concat(chunks));
           response.sendStatus(204);
         });

@@ -9,5 +9,11 @@
     "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue"]
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue"],
+  "exclude": [
+    "src/automation/template-registry-file-store.ts",
+    "src/automation/background-job-file-store.ts",
+    "src/automation/feishu-app-ticket.ts",
+    "src/automation/feishu-background-ports.ts"
+  ]
 }

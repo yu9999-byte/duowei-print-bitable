@@ -37,7 +37,9 @@ function getLinkKind(field: IFieldMeta, sourceTableId: string): "reference" | "d
   if (field.type === FieldType.SingleLink && property?.tableId === sourceTableId) {
     return "reference";
   }
-  return property?.multiple === true ? "detail" : "reference";
+  // Link direction is independent of cardinality: a cross-table relation with
+  // one allowed/selected record still supplies a one-row detail source.
+  return "detail";
 }
 
 function toLinkCellValue(value: unknown, field: IFieldMeta): LinkCellValue {
@@ -82,6 +84,7 @@ export async function loadPrintJob(
   ]);
   const linkedReaders = new Map<string, Promise<LinkedTableReader>>();
   const linkedColumns = new Map<string, NormalizedField["arrayColumns"]>();
+  const detailColumns = new Map<string, NormalizedField["detailColumns"]>();
   const fieldCache = new Map<string, ReturnType<typeof table.getFieldById>>();
 
   const getCellString = async (recordId: string, field: IFieldMeta): Promise<string> => {
@@ -189,8 +192,11 @@ export async function loadPrintJob(
         return [field.name, value.trim() ? value : "—"] as const;
       }
       const linkValue = toLinkCellValue(record.fields[field.id], field);
-      const expanded = await expandLinkedRecords(linkValue, await getLinkedReader(linkValue.tableId));
-      linkedColumns.set(field.id, expanded.columns);
+      const expanded = await expandLinkedRecords(linkValue, await getLinkedReader(linkValue.tableId), {
+        includeAllFields: true,
+      });
+      linkedColumns.set(field.id, expanded.columns.slice(0, 5));
+      detailColumns.set(field.id, expanded.detailColumns);
       return [field.name, expanded.rows] as const;
     }));
     return {
@@ -225,7 +231,10 @@ export async function loadPrintJob(
       return {
         isLink: true as const,
         linkKind,
-        ...(linkKind === "detail" ? { arrayColumns: linkedColumns.get(field.id) ?? [] } : {}),
+        ...(linkKind === "detail" ? {
+          arrayColumns: linkedColumns.get(field.id) ?? [],
+          detailColumns: detailColumns.get(field.id) ?? [],
+        } : {}),
       };
     })() : {}),
   }));

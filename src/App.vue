@@ -33,15 +33,19 @@ import {
 } from "./host/feishu-context.ts";
 import { loadPrintJob } from "./host/bitable-gateway.ts";
 import { templateRepository } from "./host/template-storage.ts";
-import type { PrintJob } from "./core/print-job.ts";
+import { automationTemplateSync } from "./host/automation-template-sync.ts";
+import { RegistryConnectionRequiredError } from "./automation/registry-write-authorization.ts";
+import { isDetailLinkField, type PrintJob } from "./core/print-job.ts";
 import {
   generateBlankTemplate,
   generateLabelTemplate,
   generateTemplate,
 } from "./core/template-generator.ts";
 import {
+  commitBatchPrintSession,
   createSinglePrintSession,
   shouldExitBatchOnTemplateSwitch,
+  summarizeBatch,
   type BatchPrintSession,
 } from "./core/batch-print-session.ts";
 import { prepareBatchCandidate } from "./core/batch-candidate-transaction.ts";
@@ -57,6 +61,7 @@ import type { RenderedPrintJob } from "./engine/designer-adapter.ts";
 import {
   buildDataSourceClipboardPayload,
   fieldDataSourceId,
+  detailFieldDataSourceId,
   SYSTEM_PRINT_DATE_ID,
 } from "./core/data-sources.ts";
 import type { StoredTemplate, TemplateCollection } from "./core/template-repository.ts";
@@ -82,6 +87,12 @@ import {
   type TemplateCreateKind,
 } from "./components/template-creation-choice.ts";
 import { getWorkspacePresentation } from "./components/workspace-presentation.ts";
+import { fitDesignerZoom, fitPreviewPaper } from "./components/preview-fit.ts";
+import {
+  isExplicitLayerActionControl,
+  restoreImplicitSelectionLayering,
+  withoutImplicitSelectionLayering,
+} from "./core/designer-selection.ts";
 import {
   canEnterTemplateEdit,
   contextDecisionCancelStatus,
@@ -99,6 +110,8 @@ import {
 } from "./core/workspace.ts";
 
 const designerRef = ref<DesignerElement | null>(null);
+const previewSurfaceRef = ref<HTMLElement | null>(null);
+const previewAvailableWidth = ref(0);
 const selection = ref<FeishuSelection | null>(null);
 const printJob = ref<PrintJob | null>(null);
 const templateChecksum = ref<string | null>(null);
@@ -140,6 +153,7 @@ const busy = ref(false);
 const activeTemplateMenuId = ref<string | null>(null);
 const newTemplateMenuOpen = ref(false);
 const statusToastVisible = ref(false);
+const automationConnectUrl = ref("");
 let contextRevision = 0;
 let candidateRender: Promise<RenderedPrintJob> | null = null;
 let statusToastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -154,6 +168,10 @@ let stopDesignerTemplatePanelSuppression: (() => void) | undefined;
 let stopDesignerDirtyTracking: (() => void) | undefined;
 let resolveDesignerReady: (() => void) | undefined;
 let templateManagementReturnFocus: HTMLElement | null = null;
+let pendingAutomationSync: (() => Promise<void>) | null = null;
+let automationConnectionWindow: Window | null = null;
+let automationConnectionProbeTimer: ReturnType<typeof setInterval> | undefined;
+let explicitLayeringMutation = false;
 const readyPromise = new Promise<void>((resolve) => { resolveDesignerReady = resolve; });
 
 const editorPanelLabels: Record<EditorPanel, string> = {
@@ -182,6 +200,8 @@ const currentTemplateName = computed(() => draftTemplateId.value
 const visibleTemplateCount = computed(() => templateCollection.value.templates.length
   + ((!templateCollection.value.templates.length || selectedTemplateId.value === "automatic") ? 1 : 0));
 const templateSelected = computed(() => templateLoaded.value && Boolean(selectedTemplateId.value));
+const dataSourceSearch = ref("");
+const copiedSourceId = ref("");
 const fieldDataSources = computed(() => printJob.value?.table.fields ?? []);
 const batchWorkspaceActions = computed(() => getBatchWorkspaceActionState({
   busy: busy.value,
@@ -210,7 +230,30 @@ const isBatchMode = computed(() => batchWorkspaceActions.value.isBatchMode);
 const workspaceSurface = computed(() => getWorkspaceSurface(workspaceMode.value, isBatchMode.value));
 const presentation = computed(() => getWorkspacePresentation(workspaceSurface.value));
 const showBatchRetry = computed(() => batchWorkspaceActions.value.retryVisible);
-const previewFrameHeight = computed(() => `${renderedPages.value ? renderedPreviewHeight(renderedPages.value) : 1040}px`);
+const previewPaperWidth = computed(() => renderedPages.value?.canvasWidth ?? 794);
+const previewPaperHeight = computed(() => renderedPages.value ? renderedPreviewHeight(renderedPages.value) : 1040);
+const previewScale = computed(() => fitPreviewPaper(previewPaperWidth.value, previewAvailableWidth.value));
+const previewPaperStyle = computed(() => ({
+  width: `${previewPaperWidth.value * previewScale.value}px`,
+  height: `${previewPaperHeight.value * previewScale.value}px`,
+}));
+const previewFrameStyle = computed(() => ({
+  width: `${previewPaperWidth.value}px`,
+  height: `${previewPaperHeight.value}px`,
+  transform: `scale(${previewScale.value})`,
+}));
+watch(previewSurfaceRef, (surface, _, onCleanup) => {
+  if (!surface) return;
+  const measure = () => {
+    const style = getComputedStyle(surface);
+    previewAvailableWidth.value = Math.max(0,
+      surface.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight));
+  };
+  measure();
+  const observer = new ResizeObserver(measure);
+  observer.observe(surface);
+  onCleanup(() => observer.disconnect());
+});
 const hasFeedbackError = computed(() => Boolean(error.value || templateWarning.value || previewError.value));
 const showStatusFeedback = computed(() => busy.value
   || hasFeedbackError.value
@@ -257,6 +300,99 @@ function handleGlobalPointerDown(event: PointerEvent) {
   const target = event.target;
   if (target instanceof Element && target.closest(".menu-anchor")) return;
   closeTransientMenus();
+}
+
+function rememberAutomationConnection(error: Error, retry: () => Promise<void>): void {
+  if (!(error instanceof RegistryConnectionRequiredError)) return;
+  automationConnectUrl.value = error.connectUrl;
+  pendingAutomationSync = retry;
+}
+
+function clearAutomationConnection(): void {
+  if (automationConnectionProbeTimer) clearInterval(automationConnectionProbeTimer);
+  automationConnectionProbeTimer = undefined;
+  automationConnectUrl.value = "";
+  pendingAutomationSync = null;
+  automationConnectionWindow = null;
+}
+
+function connectAutomation(): void {
+  if (!automationConnectUrl.value || busy.value) return;
+  const popup = window.open(
+    automationConnectUrl.value,
+    "duowei-print-oauth",
+    "popup=yes,width=520,height=680,resizable=yes,scrollbars=yes",
+  );
+  if (!popup) {
+    error.value = "浏览器阻止了连接窗口，请允许多维打印打开窗口后重试";
+    status.value = "自动化尚未连接";
+    return;
+  }
+  automationConnectionWindow = popup;
+  const bridge = automationTemplateSync?.bridge;
+  if (automationConnectionProbeTimer) clearInterval(automationConnectionProbeTimer);
+  automationConnectionProbeTimer = undefined;
+  if (bridge) {
+    const probe = () => {
+      if (popup.closed) {
+        if (automationConnectionProbeTimer) clearInterval(automationConnectionProbeTimer);
+        automationConnectionProbeTimer = undefined;
+        return;
+      }
+      bridge.probe(popup);
+    };
+    probe();
+    automationConnectionProbeTimer = setInterval(probe, 500);
+    status.value = "正在连接自动化模板服务…";
+  } else {
+    status.value = "请在新窗口完成飞书连接";
+  }
+}
+
+async function handleAutomationConnectionMessage(event: MessageEvent): Promise<void> {
+  if (automationTemplateSync?.bridge?.handleMessage(event)) return;
+  if (!automationConnectUrl.value || !automationConnectionWindow) return;
+  if (event.source !== automationConnectionWindow) return;
+  if (event.origin !== new URL(automationConnectUrl.value).origin) return;
+  const data = event.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return;
+  const type = (data as Record<string, unknown>).type;
+  if (type === "duowei-print:oauth-failed") {
+    if (automationConnectionProbeTimer) clearInterval(automationConnectionProbeTimer);
+    automationConnectionProbeTimer = undefined;
+    automationTemplateSync?.bridge?.disconnect();
+    error.value = typeof (data as Record<string, unknown>).message === "string"
+      ? String((data as Record<string, unknown>).message)
+      : "飞书连接未完成，请重试";
+    status.value = "自动化尚未连接";
+    automationConnectionWindow = null;
+    return;
+  }
+  if (type !== "duowei-print:oauth-connected") return;
+  if (automationConnectionProbeTimer) clearInterval(automationConnectionProbeTimer);
+  automationConnectionProbeTimer = undefined;
+  automationTemplateSync?.bridge?.connect(automationConnectionWindow);
+  const retry = pendingAutomationSync;
+  automationConnectionWindow = null;
+  if (!retry) {
+    clearAutomationConnection();
+    return;
+  }
+  busy.value = true;
+  error.value = "";
+  status.value = "已连接，正在同步当前模板…";
+  try {
+    await retry();
+    clearAutomationConnection();
+    status.value = "自动化已连接，当前模板已同步";
+  } catch (cause) {
+    const failure = cause instanceof Error ? cause : new Error("自动化模板同步失败");
+    rememberAutomationConnection(failure, retry);
+    error.value = failure.message;
+    status.value = automationConnectUrl.value ? "自动化连接未生效，请重试" : "自动化模板同步失败";
+  } finally {
+    busy.value = false;
+  }
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
@@ -392,6 +528,7 @@ async function loadBatchCandidate(retryRequest?: BatchRetryRequest) {
   const designer = designerRef.value;
   let pending: Promise<RenderedPrintJob> | null = null;
   let previousDesignerTemplate: unknown = null;
+  let savingSelection = false;
   busy.value = true;
   error.value = "";
   batchRetryAvailable.value = false;
@@ -447,16 +584,37 @@ async function loadBatchCandidate(retryRequest?: BatchRetryRequest) {
       },
       composeRendered: composeRenderedPrintPages,
     });
+    const context = { baseId: active.baseId, tableId: active.tableId };
+    const existingId = storedTemplate.value?.id;
+    const id = existingId ?? draftTemplateId.value ?? crypto.randomUUID();
+    savingSelection = true;
+    const updated = existingId
+      ? await templateRepository.setBatchRecords(context, id, candidate.session.committedRecordIds,
+        templateCollection.value.revision)
+      : await templateRepository.upsert(context, previousDesignerTemplate, {
+          id, name: currentTemplateName.value, expectedRevision: templateCollection.value.revision,
+          savedBatchRecordIds: candidate.session.committedRecordIds,
+        });
+    await assertCurrentContext(active, revision);
+    const saved = updated.templates.find((item) => item.id === id)!;
+    templateCollection.value = updated;
+    storedTemplate.value = saved;
+    selectedTemplateId.value = id;
+    draftTemplateId.value = null;
+    draftOriginId.value = null;
+    templateChecksum.value = saved.checksum;
+    templateFallback.value = false;
+    templateDirty.value = false;
     selection.value = active;
     printJob.value = candidate.job;
-    batchSession.value = candidate.session;
+    batchSession.value = { ...candidate.session, templateId: id };
     renderedPages.value = candidate.rendered;
     previewHtml.value = candidate.previewHtml;
     batchPreviewStale.value = false;
     previewError.value = "";
     batchRetryRequest.value = null;
     workspaceMode.value = "preview";
-    status.value = `已选 ${ids.length} 条，批次预览已生成`;
+    status.value = `已为当前模板保存 ${ids.length} 条记录，批次预览已生成`;
   } catch (cause) {
     if (revision === contextRevision) {
       if (designer && previous && previousDesignerTemplate) {
@@ -467,10 +625,12 @@ async function loadBatchCandidate(retryRequest?: BatchRetryRequest) {
         }
       }
       const feedback = getBatchReadFailureFeedback(cause);
-      batchRetryAvailable.value = feedback.retryAvailable;
-      batchRetryRequest.value = feedback.retryAvailable ? candidateRequest : null;
-      error.value = feedback.error;
-      status.value = feedback.status;
+      batchRetryAvailable.value = savingSelection || feedback.retryAvailable;
+      batchRetryRequest.value = batchRetryAvailable.value ? candidateRequest : null;
+      error.value = savingSelection
+        ? `打印记录未保存：${cause instanceof Error ? cause.message : "飞书存储写入失败"}`
+        : feedback.error;
+      status.value = savingSelection ? "记录选择未保存，原预览已保留" : feedback.status;
     }
   } finally {
     if (candidateRender === pending) candidateRender = null;
@@ -519,6 +679,16 @@ async function exitBatchMode() {
     candidateRender = pending;
     const rendered = await pending;
     await assertCurrentContext(active, revision);
+    if (storedTemplate.value) {
+      const updated = await templateRepository.setBatchRecords(
+        { baseId: active.baseId, tableId: active.tableId },
+        storedTemplate.value.id,
+        [],
+        templateCollection.value.revision,
+      );
+      templateCollection.value = updated;
+      storedTemplate.value = updated.templates.find((item) => item.id === storedTemplate.value?.id) ?? null;
+    }
     selection.value = active;
     printJob.value = job;
     batchSession.value = createSinglePrintSession(active.recordId);
@@ -527,7 +697,7 @@ async function exitBatchMode() {
     batchPreviewStale.value = false;
     previewError.value = "";
     workspaceMode.value = "preview";
-    status.value = "已返回当前记录";
+    status.value = "已清除当前模板保存的打印记录，返回当前记录";
   } catch (cause) {
     if (revision === contextRevision) {
       if (designer && previous && previousDesignerTemplate) {
@@ -567,17 +737,39 @@ async function loadTemplateAndPreview(
     const stored = collection.templates.find((item) => item.id === id) ?? null;
     if (id && id !== "automatic" && !stored) throw new Error("所选模板已不存在，请重新加载");
     await assertCurrentContext(active, revision);
+    let selectedJob = job;
+    let savedBatch: BatchPrintSession | null = null;
+    let batchRestoreWarning = "";
+    if (stored?.savedBatchRecordIds?.length) {
+      try {
+        selectedJob = await loadPrintJob(active, stored.savedBatchRecordIds);
+        await assertCurrentContext(active, revision);
+        const committed = commitBatchPrintSession(createSinglePrintSession(active.recordId), {
+          recordIds: stored.savedBatchRecordIds,
+          summaries: summarizeBatch(selectedJob),
+          templateId: stored.id,
+        });
+        if (!committed.ok) throw new Error(committed.message);
+        savedBatch = committed.session;
+      } catch (cause) {
+        if (revision !== contextRevision) throw cause;
+        selectedJob = job;
+        batchRestoreWarning = cause instanceof Error ? cause.message : "保存的打印记录无法读取";
+      }
+    }
     const singleTemplate = stored
       ? ensureBatchLayout(
         stored.template,
-        "default",
-        () => generateLabelTemplate(job),
-        () => generateTemplate(job),
+        savedBatch ? getBatchLayoutMode(stored.template) : "default",
+        () => generateLabelTemplate(selectedJob),
+        () => generateTemplate(selectedJob),
       ).effectiveTemplate
       : undefined;
-    const bindWarning = await bindStoredTemplateOrFallback(designerRef.value, singleTemplate, job);
+    const bindWarning = await bindStoredTemplateOrFallback(designerRef.value, singleTemplate, selectedJob);
     await assertCurrentContext(active, revision);
     warning ??= bindWarning;
+    printJob.value = selectedJob;
+    batchSession.value = savedBatch ?? createSinglePrintSession(active.recordId);
     templateCollection.value = collection;
     storedTemplate.value = warning ? null : stored;
     selectedTemplateId.value = warning ? "automatic" : stored?.id ?? "automatic";
@@ -589,7 +781,9 @@ async function loadTemplateAndPreview(
     templateSaveAllowed.value = !warning;
     templateDirty.value = false;
     captureTemplateBaseline();
-    templateWarning.value = warning
+    templateWarning.value = batchRestoreWarning
+      ? `保存的打印记录暂时无法恢复：${batchRestoreWarning}；模板仍可用于当前记录`
+      : warning
       ? `${warning}；原模板未覆盖，已改用自动模板并绑定真实数据`
       : "";
     renderedPages.value = null;
@@ -604,7 +798,7 @@ async function loadTemplateAndPreview(
     previewHtml.value = "";
     previewError.value = "";
     try {
-      const rendered = await renderPrintJobPages(designerRef.value, job);
+      const rendered = await renderPrintJobPages(designerRef.value, selectedJob);
       await assertCurrentContext(active, revision);
       renderedPages.value = rendered;
       previewHtml.value = composeRenderedPrintPages(rendered);
@@ -637,8 +831,31 @@ function readTemplateSnapshot() {
   }
 }
 
-function captureTemplateBaseline() {
-  templateBaseline = readTemplateSnapshot();
+function captureTemplateBaseline(template?: unknown) {
+  templateBaseline = template === undefined
+    ? readTemplateSnapshot()
+    : JSON.stringify(template);
+  explicitLayeringMutation = false;
+}
+
+function isExplicitLayeringAction(event: Event): boolean {
+  return (typeof event.composedPath === "function" ? event.composedPath() : [event.target])
+    .some((item) => {
+      if (!(item instanceof Element)) return false;
+      return isExplicitLayerActionControl({
+        tagName: item.tagName,
+        role: item.getAttribute("role"),
+        ariaLabel: item.getAttribute("aria-label"),
+        title: item.getAttribute("title"),
+        text: item.textContent,
+      });
+    });
+}
+
+function handleDocumentCapture(event: Event) {
+  if (workspaceMode.value === "edit" && isExplicitLayeringAction(event)) {
+    explicitLayeringMutation = true;
+  }
 }
 
 function refreshTemplateDirtyState() {
@@ -646,7 +863,11 @@ function refreshTemplateDirtyState() {
   templateDirty.value = getTemplateDirtyState({
     hasDraft: Boolean(draftTemplateId.value),
     baseline: templateBaseline,
-    snapshot: readTemplateSnapshot(),
+    snapshot: withoutImplicitSelectionLayering(
+      readTemplateSnapshot(),
+      templateBaseline,
+      explicitLayeringMutation,
+    ),
     dirty: templateDirty.value,
   });
   return templateDirty.value;
@@ -776,7 +997,11 @@ async function saveTemplate(options: { returnToPreview?: boolean; allowContextCh
     const id = draftTemplateId.value ?? (selectedTemplateId.value === "automatic"
       ? crypto.randomUUID() : selectedTemplateId.value);
     if (!id) throw new Error("请先选择模板");
-    const editedTemplate = getPersistentTemplateData(designerRef.value);
+    const editedTemplate = restoreImplicitSelectionLayering(
+      getPersistentTemplateData(designerRef.value),
+      templateBaseline,
+      explicitLayeringMutation,
+    );
     const canonicalTemplate = draftTemplateId.value
       ? editedTemplate
       : storedTemplate.value?.template ?? editedTemplate;
@@ -810,6 +1035,25 @@ async function saveTemplate(options: { returnToPreview?: boolean; allowContextCh
       updated = await persist();
     }
     const saved = updated.templates.find((item) => item.id === id)!;
+    let automationSyncFailure: Error | null = null;
+    if (automationTemplateSync) {
+      const templateSync = automationTemplateSync;
+      try {
+        await templateSync.sync({
+          baseToken: active.baseId,
+          tableId: active.tableId,
+        }, saved);
+        clearAutomationConnection();
+      } catch (cause) {
+        automationSyncFailure = cause instanceof Error
+          ? cause
+          : new Error("模板已保存，但自动化同步失败");
+        rememberAutomationConnection(automationSyncFailure, () => templateSync.sync({
+          baseToken: active.baseId,
+          tableId: active.tableId,
+        }, saved).then(() => undefined));
+      }
+    }
     templateCollection.value = updated;
     selectedTemplateId.value = id;
     draftTemplateId.value = null;
@@ -819,12 +1063,17 @@ async function saveTemplate(options: { returnToPreview?: boolean; allowContextCh
     templateFallback.value = false;
     templateDirty.value = false;
     templateCreateError.value = "";
+    // The editor can keep a bound runtime projection after persistence. Compare
+    // future edits with that same live projection, not the stored canonical data.
     captureTemplateBaseline();
     status.value = "模板已保存（未写入当前记录值）";
     if (batchEditing && renderFailure) {
       batchPreviewStale.value = true;
-      error.value = `模板已保存，但批量预览刷新失败：${renderFailure.message}`;
-      status.value = "模板已保存，原批量预览仍保留；请重试刷新";
+      error.value = `模板已保存，但批量预览刷新失败：${renderFailure.message}`
+        + (automationSyncFailure ? `；${automationSyncFailure.message}` : "");
+      status.value = automationSyncFailure
+        ? "模板已保存，但批量预览刷新和自动化同步失败"
+        : "模板已保存，原批量预览仍保留；请重试刷新";
       return false;
     }
     if (renderedBatch) {
@@ -836,6 +1085,14 @@ async function saveTemplate(options: { returnToPreview?: boolean; allowContextCh
       status.value = `模板已保存，已按 ${batchSession.value.committedRecordIds.length} 条记录刷新批量预览`;
     } else if (options.returnToPreview) {
       workspaceMode.value = "preview";
+    }
+    if (automationSyncFailure) {
+      error.value = automationSyncFailure.message;
+      status.value = "模板已保存，但自动化同步失败";
+    } else if (automationTemplateSync) {
+      status.value = renderedBatch
+        ? `模板已保存并按 ${batchSession.value.committedRecordIds.length} 条记录刷新，可用于自动化`
+        : "模板已保存，可用于自动化";
     }
     return true;
   } catch (cause) {
@@ -1041,8 +1298,21 @@ async function selectTemplate(id: string): Promise<boolean> {
   templateCreateError.value = "";
   try {
     if (id !== "automatic" && !target) throw new Error("所选模板已不存在，请重新加载");
-    const exitsOwnedBatch = shouldExitBatchOnTemplateSwitch(batchSession.value, id);
-    if (exitsOwnedBatch) {
+    let savedIds = target?.savedBatchRecordIds ?? [];
+    let restoreWarning = "";
+    const keepingCurrentBatch = batchSession.value.mode === "batch" && batchSession.value.templateId === id;
+    if (savedIds.length) {
+      try {
+        job = keepingCurrentBatch && savedIds.join("\u0000") === batchSession.value.committedRecordIds.join("\u0000")
+          ? previousJob : await loadPrintJob(active, savedIds);
+        await assertCurrentContext(active, revision);
+      } catch (cause) {
+        if (revision !== contextRevision) throw cause;
+        savedIds = [];
+        restoreWarning = cause instanceof Error ? cause.message : "保存的打印记录无法读取";
+      }
+    }
+    if (!savedIds.length && batchSession.value.mode === "batch") {
       const currentIds = getCurrentRecordIds(active);
       if (!currentIds.length) throw new Error("当前宿主记录不可用；原批次已保留");
       job = await loadPrintJob(active, currentIds);
@@ -1050,7 +1320,7 @@ async function selectTemplate(id: string): Promise<boolean> {
     }
     const previousTemplate = getPersistentTemplateData(designer);
     const canonicalTemplate = target?.template ?? generateTemplate(job);
-    const selectedMode = isBatchMode.value && !exitsOwnedBatch
+    const selectedMode = savedIds.length
       ? getBatchLayoutMode(canonicalTemplate) : "default";
     const explicitTemplate = ensureBatchLayout(
       canonicalTemplate,
@@ -1080,7 +1350,15 @@ async function selectTemplate(id: string): Promise<boolean> {
       },
     });
     printJob.value = job;
-    if (exitsOwnedBatch) batchSession.value = createSinglePrintSession(active.recordId);
+    if (savedIds.length) {
+      const committed = commitBatchPrintSession(createSinglePrintSession(active.recordId), {
+        recordIds: savedIds, summaries: summarizeBatch(job), templateId: id,
+      });
+      if (!committed.ok) throw new Error(committed.message);
+      batchSession.value = committed.session;
+    } else {
+      batchSession.value = createSinglePrintSession(active.recordId);
+    }
     storedTemplate.value = target;
     selectedTemplateId.value = id;
     draftTemplateId.value = null;
@@ -1091,15 +1369,17 @@ async function selectTemplate(id: string): Promise<boolean> {
     templateSaveAllowed.value = true;
     templateDirty.value = false;
     captureTemplateBaseline();
-    templateWarning.value = "";
+    templateWarning.value = restoreWarning
+      ? `当前模板保存的打印记录暂时不可用：${restoreWarning}；已显示当前记录`
+      : "";
     renderedPages.value = candidate.rendered;
     previewHtml.value = composeRenderedPrintPages(candidate.rendered);
     batchPreviewStale.value = false;
-    status.value = isBatchMode.value
-      ? `已保留 ${batchSession.value.committedRecordIds.length} 条记录并切换模板`
-      : exitsOwnedBatch
-        ? "已退出原模板批量并切换到当前记录预览"
-        : "已切换模板并刷新当前记录预览";
+    status.value = restoreWarning
+      ? "已切换模板；保存的打印记录暂时不可用"
+      : isBatchMode.value
+      ? `已恢复当前模板保存的 ${batchSession.value.committedRecordIds.length} 条记录`
+      : "已切换模板并刷新当前记录预览";
     return true;
   } catch (cause) {
     if (revision === contextRevision) {
@@ -1134,8 +1414,51 @@ async function updateDirectory(
         ? await templateRepository.remove(context, item.id, expected)
         : await templateRepository.setDefault(context, item.id, expected);
     await assertCurrentContext(active, revision);
+    let automationSyncFailure: Error | null = null;
+    if (automationTemplateSync && action !== "default") {
+      const templateSync = automationTemplateSync;
+      try {
+        if (action === "remove") {
+          await templateSync.remove({
+            baseToken: active.baseId,
+            tableId: active.tableId,
+          }, item);
+        } else {
+          const renamed = updated.templates.find((template) => template.id === item.id);
+          if (!renamed) throw new Error("重命名后的模板不存在");
+          await templateSync.sync({
+            baseToken: active.baseId,
+            tableId: active.tableId,
+          }, renamed);
+        }
+        clearAutomationConnection();
+      } catch (cause) {
+        automationSyncFailure = cause instanceof Error
+          ? cause
+          : new Error("模板目录已更新，但自动化同步失败");
+        const retry = action === "remove"
+          ? () => templateSync.remove({
+              baseToken: active.baseId,
+              tableId: active.tableId,
+            }, item).then(() => undefined)
+          : () => {
+              const renamed = updated.templates.find((template) => template.id === item.id);
+              if (!renamed) return Promise.reject(new Error("重命名后的模板不存在"));
+              return templateSync.sync({
+                baseToken: active.baseId,
+                tableId: active.tableId,
+              }, renamed).then(() => undefined);
+            };
+        rememberAutomationConnection(automationSyncFailure, retry);
+      }
+    }
     templateCollection.value = updated;
-    status.value = action === "rename" ? "模板已重命名" : action === "remove" ? "模板已删除" : "默认模板已更新";
+    if (automationSyncFailure) {
+      error.value = automationSyncFailure.message.replace(/^模板已保存/, "模板目录已更新");
+      status.value = "模板目录已更新，但自动化同步失败";
+    } else {
+      status.value = action === "rename" ? "模板已重命名" : action === "remove" ? "模板已删除" : "默认模板已更新";
+    }
     if (action === "remove" && selectedTemplateId.value === item.id) {
       nextSelection = updated.defaultId ?? "automatic";
     }
@@ -1246,17 +1569,26 @@ async function enterEditMode() {
   error.value = "";
   try {
     const persistentTemplate = getPersistentTemplateData(designer);
+    const canvasWidth = Number((persistentTemplate.canvasSize as { width?: unknown } | undefined)?.width);
+    const editTemplate = {
+      ...persistentTemplate,
+      zoom: fitDesignerZoom(canvasWidth, designer.clientWidth, Number(persistentTemplate.zoom) || 1),
+    };
     if (isBatchMode.value) {
-      await bindBatchEditProjection(designer, persistentTemplate, job, renderedLayout.value);
+      await bindBatchEditProjection(designer, editTemplate, job, renderedLayout.value);
     } else {
-      await bindPrintJob(designer, persistentTemplate, job);
+      await bindPrintJob(designer, editTemplate, job);
     }
     if (active) await assertCurrentContext(active, revision);
     workspaceMode.value = "edit";
     activeEditorPanel.value = "data-sources";
+    // The designer opens its floating properties panel over the right side of
+    // the paper. Start with it closed so the fitted sheet is actually visible.
+    await nextTick();
+    window.dispatchEvent(new Event("designer:close-properties-panel"));
     captureTemplateBaseline();
     status.value = isBatchMode.value
-      ? `已加载全部 ${job.documents.length} 条记录，可滚动编辑；修改同步到全部记录`
+      ? `已加载 ${job.documents.length} 条记录`
       : "已进入编辑模式";
   } catch (cause) {
     try {
@@ -1511,8 +1843,10 @@ async function copyDataSource(source: { id: string; label: string }) {
   error.value = "";
   try {
     await writeClipboardText(payload.text);
+    copiedSourceId.value = source.id;
+    window.setTimeout(() => { if (copiedSourceId.value === source.id) copiedSourceId.value = ""; }, 1800);
     if (designerRef.value) rememberCopiedDataSource(designerRef.value, payload);
-    status.value = `已复制“${source.label}”，请选中文本组件后粘贴`;
+    status.value = source.id.includes(".__duowei_column_") ? `已复制“${source.label}”，请双击表格数据行的单元格后粘贴` : `已复制“${source.label}”，请选中文本组件后粘贴`;
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : "数据源复制失败";
     status.value = "数据源复制失败";
@@ -1587,8 +1921,10 @@ async function exportPdf() {
 
 onMounted(() => {
   window.addEventListener("duowei-print:designer-load-error", handleDesignerLoadError);
+  window.addEventListener("message", handleAutomationConnectionMessage);
   document.addEventListener("pointerdown", handleGlobalPointerDown);
   document.addEventListener("keydown", handleGlobalKeydown);
+    document.addEventListener("click", handleDocumentCapture, true);
   stopDesignerPrintInterception = installDesignerPrintInterception(window, () => {
     void printOutput();
   });
@@ -1625,10 +1961,14 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("duowei-print:designer-load-error", handleDesignerLoadError);
+  window.removeEventListener("message", handleAutomationConnectionMessage);
   document.removeEventListener("pointerdown", handleGlobalPointerDown);
   document.removeEventListener("keydown", handleGlobalKeydown);
+  document.removeEventListener("click", handleDocumentCapture, true);
   if (statusToastTimer) clearTimeout(statusToastTimer);
   if (batchProjectionSyncTimer) clearTimeout(batchProjectionSyncTimer);
+  if (automationConnectionProbeTimer) clearInterval(automationConnectionProbeTimer);
+  automationTemplateSync?.bridge?.dispose();
   stopSelectionWatch?.();
   stopDataSourceTerminology?.();
   stopDataSourceEditingLifecycle?.();
@@ -1649,15 +1989,27 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <div v-if="showStatusFeedback" class="status-line" :class="{ 'status-line-error': hasFeedbackError }"
+    <div v-if="showStatusFeedback" class="status-line" :class="{ 'status-line-error': hasFeedbackError, 'status-line-loading': busy && !hasFeedbackError }"
       :role="hasFeedbackError ? 'alert' : 'status'" aria-live="polite">
-      <span class="status-indicator" aria-hidden="true"></span>
+      <svg class="status-indicator" viewBox="0 0 20 20" aria-hidden="true">
+        <template v-if="hasFeedbackError">
+          <circle cx="10" cy="10" r="9" fill="currentColor" />
+          <path d="M10 5.5v5M10 14v.1" stroke="white" stroke-width="1.8" stroke-linecap="round" />
+        </template>
+        <circle v-else-if="busy" cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="34 14" />
+        <template v-else>
+          <circle cx="10" cy="10" r="9" fill="currentColor" />
+          <path d="m6 10 2.5 2.5L14 7" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        </template>
+      </svg>
       <span>{{ status }}</span>
       <span v-if="templateWarning">模板：{{ templateWarning }}</span>
       <span v-if="previewError">预览：{{ previewError }}</span>
       <span v-if="error">{{ error }}</span>
       <button v-if="showBatchRetry" class="status-retry-button" type="button"
         @click="retryBatchCandidate">重试批量读取</button>
+      <button v-if="automationConnectUrl" class="status-retry-button" type="button"
+        :disabled="busy" @click="connectAutomation">连接自动化</button>
     </div>
 
     <section class="workspace" :class="`workspace-${workspaceMode}`">
@@ -1736,21 +2088,42 @@ onBeforeUnmount(() => {
             </button>
           </nav>
 
-          <div v-if="activeEditorPanel === 'data-sources'" class="sidebar-section editor-content">
-            <strong class="editor-group-title">字段</strong>
-            <button v-for="field in fieldDataSources" :key="field.id" class="data-source-row" type="button"
+          <div v-if="activeEditorPanel === 'data-sources'" class="sidebar-section editor-content source-panel">
+            <label class="source-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input v-model="dataSourceSearch" placeholder="搜索字段" aria-label="搜索数据源字段" /></label>
+            <strong class="editor-group-title source-section-heading">当前记录 <span>{{ fieldDataSources.length }} 个字段</span></strong>
+            <template v-for="field in fieldDataSources.filter(item => !dataSourceSearch.trim() || item.name.includes(dataSourceSearch.trim()) || (item.detailColumns ?? item.arrayColumns ?? []).some(column => column.header.includes(dataSourceSearch.trim())))" :key="field.id">
+            <details v-if="isDetailLinkField(field)" class="detail-source-group" :open="dataSourceSearch.trim() ? true : undefined">
+              <summary class="data-source-row detail-source-summary">
+                <span class="source-main"><svg class="source-type-icon source-link-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="3" width="10" height="7" rx="3"/><rect x="8" y="10" width="10" height="7" rx="3"/><path d="m8 8 4 4"/></svg><span>{{ field.name }}</span></span>
+                <small class="detail-source-count">{{ (field.detailColumns ?? field.arrayColumns ?? []).length }} 字段</small><svg class="source-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>
+              </summary>
+              <div class="detail-source-fields">
+              <button v-for="column in (field.detailColumns ?? field.arrayColumns ?? []).filter(item => !dataSourceSearch.trim() || field.name.includes(dataSourceSearch.trim()) || item.header.includes(dataSourceSearch.trim()))" :key="column.field"
+                class="data-source-row detail-source-child" type="button" :disabled="busy"
+                :aria-label="`复制明细字段 ${field.name}.${column.header}`"
+                @click="copyDataSource({ id: detailFieldDataSourceId(field.id, column.field), label: `${field.name}.${column.header}` })">
+                <span class="detail-field-copy"><span class="source-main"><span class="source-type-letter" aria-hidden="true">A</span><span :title="column.header">{{ column.header }}</span></span><span class="source-placeholder">[{{ column.header }}]</span></span>
+                <svg class="source-copy-icon" viewBox="0 0 20 20" aria-hidden="true"><path v-if="copiedSourceId === detailFieldDataSourceId(field.id, column.field)" d="m4 10 4 4 8-9"/><g v-else><rect x="7" y="3" width="10" height="12" rx="2"/><path d="M13 17H5a2 2 0 0 1-2-2V7"/></g></svg>
+              </button>
+              <span v-if="!(field.detailColumns ?? field.arrayColumns ?? []).length" class="empty-copy">关联表没有可用字段</span>
+              </div>
+            </details>
+            <button v-else class="data-source-row" type="button" :disabled="busy"
               :aria-label="`复制数据源 ${field.name}`"
               @click="copyDataSource({ id: fieldDataSourceId(field.id), label: field.name })">
-              <span class="source-main"><span class="source-symbol" aria-hidden="true">字</span><span>{{ field.name }}</span></span>
-              <small>复制</small>
+              <span class="source-main"><span class="source-type-letter" aria-hidden="true">{{ /number|currency|percent|^2$|^9902$/i.test(field.type) ? "#" : /date|time|^5$|^1001$|^1002$/i.test(field.type) ? "▦" : "A" }}</span><span :title="field.name">{{ field.name }}</span></span>
+              <svg class="source-copy-icon" viewBox="0 0 20 20" aria-hidden="true"><path v-if="copiedSourceId === fieldDataSourceId(field.id)" d="m4 10 4 4 8-9"/><g v-else><rect x="7" y="3" width="10" height="12" rx="2"/><path d="M13 17H5a2 2 0 0 1-2-2V7"/></g></svg>
             </button>
+            </template>
             <span v-if="!fieldDataSources.length" class="empty-copy">当前表没有可用字段</span>
             <strong class="editor-group-title editor-group-system">系统</strong>
             <button class="data-source-row" type="button" aria-label="复制数据源 打印日期"
               @click="copyDataSource({ id: SYSTEM_PRINT_DATE_ID, label: '打印日期' })">
-              <span class="source-main"><span class="source-symbol" aria-hidden="true">系</span><span>打印日期</span></span>
-              <small>复制</small>
+              <span class="source-main"><span class="source-type-letter" aria-hidden="true">◷</span><span>打印日期</span></span>
+              <svg class="source-copy-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="3" width="10" height="12" rx="2"/><path d="M13 17H5a2 2 0 0 1-2-2V7"/></svg>
             </button>
+            <span v-if="dataSourceSearch.trim() && !fieldDataSources.some(item => item.name.includes(dataSourceSearch.trim()) || (item.detailColumns ?? item.arrayColumns ?? []).some(column => column.header.includes(dataSourceSearch.trim())))" class="empty-copy">没有匹配的字段</span>
+            <p class="source-panel-hint">点击字段复制，粘贴到编辑区域</p>
           </div>
           <div v-if="activeEditorPanel === 'components'" class="sidebar-section editor-content">
             <p class="component-hint">拖动组件到右侧画布；选中画布中的组件后，可在右侧属性面板进行设置。</p>
@@ -1830,11 +2203,12 @@ onBeforeUnmount(() => {
             :inert="!presentation.showDesigner ? true : undefined">
             <print-designer ref="designerRef" lang="zh" @ready="markDesignerReady" />
           </div>
-          <section v-if="presentation.showPreview" class="preview-surface" aria-label="打印预览">
+          <section v-if="presentation.showPreview" ref="previewSurfaceRef" class="preview-surface" aria-label="打印预览">
             <div v-if="previewHtml" class="preview-paper-wrap">
-              <iframe :srcdoc="previewHtml" :style="{ height: previewFrameHeight,
-                width: `min(${renderedPages?.canvasWidth ?? 794}px, 100%)` }" title="打印预览"
-                class="preview-frame" scrolling="no" />
+              <div class="preview-paper-size" :style="previewPaperStyle">
+                <iframe :srcdoc="previewHtml" :style="previewFrameStyle" title="打印预览"
+                  class="preview-frame" scrolling="no" />
+              </div>
             </div>
             <div v-else class="preview-empty">
               <strong>{{ previewError ? '打印预览生成失败' : '正在生成打印预览' }}</strong>
@@ -1998,26 +2372,29 @@ onBeforeUnmount(() => {
 .back-button { justify-self: start; padding-left: 4px; }
 .status-line {
   position: fixed;
-  z-index: 40;
+  z-index: 60;
   left: 50%;
-  bottom: 14px;
+  top: 112px;
   max-width: min(620px, calc(100vw - 24px));
   min-height: 36px;
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 11px;
+  gap: 8px;
+  padding: 12px 16px;
   border: 1px solid var(--ui-divider);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, .98);
-  box-shadow: 0 6px 18px rgba(31, 35, 41, .12);
-  color: var(--ui-text-secondary);
-  font-size: 12px;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(31, 35, 41, .14);
+  color: var(--ui-text);
+  font-size: 14px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
   transform: translateX(-50%);
 }
-.status-line-error { border-color: #f2c4c1; background: #fff7f6; color: #8f2520; }
-.status-indicator { width: 7px; height: 7px; flex: 0 0 7px; border: 2px solid #baceff; border-top-color: var(--ui-primary); border-radius: 50%; }
-.status-line-error .status-indicator { border: 0; background: var(--ui-danger); }
+.status-indicator { width: 18px; height: 18px; flex: 0 0 18px; color: #2ea121; }
+.status-line-error .status-indicator { color: var(--ui-danger); }
+.status-line-loading .status-indicator { color: var(--ui-primary); animation: status-spin .8s linear infinite; }
+@keyframes status-spin { to { transform: rotate(360deg); } }
 .status-retry-button { border: 0; padding: 0 2px; background: transparent; color: var(--ui-primary); font: inherit; font-weight: 500; cursor: pointer; }
 .status-retry-button:hover { color: var(--ui-primary-hover); }
 .workspace {
@@ -2106,13 +2483,15 @@ onBeforeUnmount(() => {
 .workspace-title-line { min-width: 0; display: flex; align-items: center; gap: 7px; }
 .workspace-heading h2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 600; }
 .workspace-heading span { color: var(--ui-text-tertiary); font-size: 10px; line-height: 14px; }
+.workspace-heading .status-saved { color: #28723d; }
 .canvas-stage { position: relative; flex: 1; height: 100%; min-height: 0; overflow: hidden; background: var(--ui-workspace); }
 .designer-host { position: absolute; z-index: 1; inset: 0; height: 100%; min-height: 0; overflow: hidden; background: #fff; opacity: 1; }
 .designer-host-preview { opacity: 0; pointer-events: none; }
 .designer-host print-designer { display: block; width: 100%; height: 100%; min-height: 0; }
 .preview-surface { position: absolute; z-index: 2; inset: 0; overflow: auto; padding: 18px 16px 0; background: var(--ui-workspace); scrollbar-width: thin; }
 .preview-paper-wrap { min-height: 100%; display: flex; justify-content: center; align-items: flex-start; }
-.preview-frame { display: block; width: min(794px, 100%); min-height: 1040px; overflow: hidden; border: 0; background: transparent; box-shadow: none; }
+.preview-paper-size { position: relative; flex: 0 0 auto; }
+.preview-frame { position: absolute; top: 0; left: 0; display: block; overflow: hidden; border: 0; background: transparent; box-shadow: none; transform-origin: top left; }
 .preview-empty { min-height: 100%; display: grid; place-content: center; justify-items: center; gap: 7px; padding: 24px; color: var(--ui-text-tertiary); font-size: 12px; text-align: center; }
 .preview-empty strong { color: var(--ui-text-secondary); font-size: 14px; font-weight: 600; }
 .decision-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(31, 35, 41, .46); }
@@ -2148,5 +2527,40 @@ onBeforeUnmount(() => {
 }
 @media (prefers-reduced-motion: reduce) {
   .button { transition: none; }
+  .status-line-loading .status-indicator { animation: none; }
 }
+/* Approved field-unit design: compact neutral fields and warm detail containers. */
+.source-panel { padding: 14px 12px; }
+.source-search { display: flex; align-items: center; gap: 8px; height: 34px; margin-bottom: 18px; padding: 0 10px; border: 1px solid #e9ecf0; border-radius: 5px; background: #f7f8fa; }
+.source-search svg { width: 15px; height: 15px; fill: none; stroke: #9299a5; stroke-width: 1.5; flex-shrink: 0; }
+.source-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 12px; color: #20242b; }
+.source-search:focus-within { border-color: #3370ff; }
+.source-search input::placeholder { color: #9299a5; }
+.source-section-heading { display: flex; justify-content: space-between; margin-bottom: 10px; }
+.source-section-heading span { font-weight: 400; color: #a0a6b0; font-size: 10px; }
+.source-panel .data-source-row { min-height: 38px; margin-bottom: 7px; padding: 0 11px; border: 1px solid #e7eaf0; border-radius: 5px; font-size: 12px; background: white; gap: 8px; }
+.source-panel .data-source-row:hover:not(:disabled) { background: #f6f8fc; border-color: #cbd6ed; }
+.source-panel .data-source-row:active:not(:disabled) { background: #e8f0ff; }
+.source-type-letter { width: 16px; flex: 0 0 16px; color: #7a8290; font: 13px/16px Arial, sans-serif; }
+.source-type-icon { width: 17px; height: 17px; flex: 0 0 17px; fill: none; stroke: currentColor; stroke-width: 1.3; }
+.source-copy-icon { width: 15px; height: 15px; flex: 0 0 15px; fill: none; stroke: #9299a5; stroke-width: 1.25; }
+.source-panel .data-source-row:hover .source-copy-icon { stroke: #3370ff; }
+.detail-source-group { margin: 12px 0; border: 1px solid #ebdcc6; border-radius: 6px; background: #fffbf5; overflow: hidden; }
+.source-panel .detail-source-summary { min-height: 42px; margin: 0; border: 0; border-radius: 0; background: transparent; color: #6b512f; cursor: pointer; list-style: none; gap: 5px; }
+.detail-source-summary::-webkit-details-marker { display: none; }
+.detail-source-summary .source-main { flex: 1; font-weight: 500; }
+.source-link-icon { color: #a57b3d; }
+.source-panel .detail-source-summary:hover { background: #faf2e7; }
+.source-panel .detail-source-count { font-size: 10px; color: #a18a69; }
+.source-chevron { width: 12px; height: 12px; flex: 0 0 12px; fill: none; stroke: #aa8b5a; stroke-width: 1.4; }
+.detail-source-group[open] .source-chevron { transform: rotate(90deg); }
+.detail-source-fields { padding: 0 8px 3px; }
+.source-panel .detail-source-child { min-height: 54px; padding: 8px 10px; border-color: #e8dfd1; align-items: center; }
+.detail-field-copy { min-width: 0; display: grid; gap: 6px; }
+.detail-field-copy .source-type-letter { color: #998265; }
+.source-placeholder { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #a28a68; font-size: 10px; line-height: 14px; }
+.detail-source-child .source-copy-icon { align-self: flex-end; stroke: #b2915e; margin-bottom: 2px; }
+.source-panel-hint { margin: 16px 0 0; color: #9299a5; font-size: 10px; line-height: 16px; }
+.source-panel .data-source-row:focus-visible { outline: 2px solid #3370ff; outline-offset: 1px; }
+.source-panel .data-source-row:disabled { color: #a7adb6; background: #f7f8fa; cursor: not-allowed; }
 </style>

@@ -1,5 +1,11 @@
 import { isDetailLinkField, type NormalizedField, type PrintJob } from "./print-job.ts";
 import { cloneJsonValue } from "./json-clone.ts";
+import { DETAIL_TEMPLATE_ROWS, detailTokensFromTemplate, renderDetailTemplateRows } from "./detail-tables.ts";
+import {
+  createDataSourceTokenCodec,
+  type DataSourceTokenCodec,
+  type DataSourceTokenDefinition,
+} from "./data-source-token-codec.ts";
 
 export const FIELD_DATA_SOURCE_GROUP_ID = "__duowei_fields";
 export const SYSTEM_DATA_SOURCE_GROUP_ID = "__duowei_system";
@@ -12,6 +18,12 @@ const DATA_SOURCE_TOKEN_GLOBAL_PATTERN = /@[A-Za-z0-9_.-]+/g;
 export function fieldDataSourceId(fieldId: string): string {
   if (!fieldId.trim()) throw new Error("字段缺少稳定 ID");
   return FIELD_PREFIX + fieldId;
+}
+
+export function detailFieldDataSourceId(fieldId: string, columnField: string): string {
+  const key = /^[A-Za-z0-9_.-]+$/.test(columnField) ? columnField
+    : `__duowei_column_text_${Array.from(columnField).map((char) => char.codePointAt(0)!.toString(16)).join("_")}`;
+  return `${fieldDataSourceId(fieldId)}.${key}`;
 }
 
 export function getDocumentVariables(job: PrintJob, index: number): Record<string, unknown> {
@@ -36,11 +48,22 @@ export function getDocumentVariables(job: PrintJob, index: number): Record<strin
     }));
   const data: Record<string, unknown> = {
     ...values,
-    ...Object.fromEntries(job.table.fields.map((field) => [fieldDataSourceId(field.id), values[field.name]])),
+    ...Object.fromEntries(job.table.fields.flatMap((field) =>
+      Object.prototype.hasOwnProperty.call(values, field.name)
+        ? [[fieldDataSourceId(field.id), values[field.name]]]
+        : [])),
     ...emptyLinks,
     [SYSTEM_PRINT_DATE_ID]: printDate,
   };
   if (!("打印日期" in values)) data.打印日期 = printDate;
+  for (const field of job.table.fields.filter(isDetailLinkField)) {
+    const rows = values[field.name];
+    if (!Array.isArray(rows)) continue;
+    for (const column of field.detailColumns ?? field.arrayColumns ?? []) {
+      data[detailFieldDataSourceId(field.id, column.field)] = rows.map((row) =>
+        row && typeof row === "object" && !Array.isArray(row) ? row[column.field] ?? "" : "");
+    }
+  }
   return data;
 }
 
@@ -68,6 +91,63 @@ export type TextSelection = {
   start: number;
   end: number;
 };
+
+function historicalFieldBindings(template: unknown): Record<string, string> {
+  if (!template || typeof template !== "object" || Array.isArray(template)) return {};
+  const ext = (template as Record<string, unknown>).ext;
+  if (!ext || typeof ext !== "object" || Array.isArray(ext)) return {};
+  const bindings = (ext as Record<string, unknown>).fieldBindings;
+  if (!bindings || typeof bindings !== "object" || Array.isArray(bindings)) return {};
+  return Object.fromEntries(Object.entries(bindings).filter((entry): entry is [string, string] =>
+    typeof entry[1] === "string"));
+}
+
+function templateDataSourceDefinitions(template: unknown): DataSourceTokenDefinition[] {
+  if (!template || typeof template !== "object" || Array.isArray(template)) return [];
+  const ext = (template as Record<string, unknown>).ext;
+  if (!ext || typeof ext !== "object" || Array.isArray(ext)) return [];
+  const available = (ext as Record<string, unknown>).availableVariables;
+  if (!Array.isArray(available)) return [];
+  const definitions: DataSourceTokenDefinition[] = [];
+  const visit = (items: unknown[]) => {
+    for (const item of items) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const source = item as Record<string, unknown>;
+      if (typeof source.id === "string" && typeof source.label === "string"
+          && !Array.isArray(source.children)) {
+        definitions.push({ id: source.id, label: source.label });
+      }
+      if (Array.isArray(source.children)) visit(source.children);
+    }
+  };
+  visit(available);
+  return definitions;
+}
+
+export function createPrintJobDataSourceTokenCodec(
+  job: PrintJob,
+  template?: unknown,
+): DataSourceTokenCodec {
+  return createDataSourceTokenCodec([
+    ...job.table.fields.map((field) => ({ id: fieldDataSourceId(field.id), label: field.name })),
+    ...job.table.fields.filter(isDetailLinkField).flatMap((field) =>
+      (field.detailColumns ?? field.arrayColumns ?? []).map((column) => ({
+        id: detailFieldDataSourceId(field.id, column.field), label: `${field.name}.${column.header}`,
+      }))),
+    { id: SYSTEM_PRINT_DATE_ID, label: "打印日期" },
+    ...job.table.fields.filter(isDetailLinkField).map((field) => ({
+      id: `__duowei_print_empty_${field.id}`,
+      label: `${field.name}（空数据提示）`,
+    })),
+  ], historicalFieldBindings(template));
+}
+
+function templateDataSourceTokenCodec(template: unknown): DataSourceTokenCodec | undefined {
+  const definitions = templateDataSourceDefinitions(template);
+  const historical = historicalFieldBindings(template);
+  if (definitions.length === 0 && Object.keys(historical).length === 0) return undefined;
+  return createDataSourceTokenCodec(definitions, historical);
+}
 
 function dataSourceToken(sourceId: string): string {
   const token = `@${sourceId}`;
@@ -132,12 +212,14 @@ export function resolveDataSourceTokens(
 export function prepareTemplateForOutput(
   template: unknown,
   values: Record<string, unknown>,
+  codec: DataSourceTokenCodec | undefined = templateDataSourceTokenCodec(template),
 ): { template: Record<string, unknown>; variables: Record<string, unknown> } {
   if (!template || typeof template !== "object" || Array.isArray(template)) {
     throw new Error("打印模板格式无效：无法准备多字段输出");
   }
   const cloned = cloneJsonValue(template) as Record<string, unknown>;
   const outputVariables = { ...values };
+  const detailTokens = detailTokensFromTemplate(cloned);
   const pages = cloned.pages;
   if (!Array.isArray(pages)) return { template: cloned, variables: outputVariables };
 
@@ -148,6 +230,14 @@ export function prepareTemplateForOutput(
     elements.forEach((element, elementIndex) => {
       if (!element || typeof element !== "object" || Array.isArray(element)) return;
       const item = element as Record<string, unknown>;
+      if (item.type === "table" && Array.isArray(item[DETAIL_TEMPLATE_ROWS]) && codec) {
+        const key = `__duowei_detail_rows_${pageIndex}_${elementIndex}`;
+        outputVariables[key] = renderDetailTemplateRows(item[DETAIL_TEMPLATE_ROWS] as Record<string, any>[], detailTokens, values, codec);
+        item.variable = `@${key}`;
+        item.data = [];
+        item.autoPaginate = true;
+        return;
+      }
       if (item.type !== "text") return;
       const content = typeof item.content === "string" ? item.content : "";
       const variable = typeof item.variable === "string" ? item.variable : "";
@@ -155,7 +245,9 @@ export function prepareTemplateForOutput(
       DATA_SOURCE_TOKEN_GLOBAL_PATTERN.lastIndex = 0;
       if (!contentHasTokens && !variable) return;
       const source = contentHasTokens ? content : variable;
-      const rendered = resolveDataSourceTokens(source, values);
+      const rendered = codec
+        ? codec.toRenderedContent(source, values).content
+        : resolveDataSourceTokens(source, values);
       const rawId = typeof item.id === "string" && item.id.trim()
         ? item.id
         : `${pageIndex}_${elementIndex}`;
@@ -177,7 +269,14 @@ export function buildDataSourceCatalog(fields: NormalizedField[]): DesignerDataS
       children: fields.map((field) => ({
         id: fieldDataSourceId(field.id),
         label: field.name,
-        ...(isDetailLinkField(field) ? { isArray: true } : {}),
+        ...(isDetailLinkField(field) ? {
+          isArray: true,
+          columns: field.detailColumns ?? field.arrayColumns ?? [],
+          children: (field.detailColumns ?? field.arrayColumns ?? []).map((column) => ({
+            id: detailFieldDataSourceId(field.id, column.field),
+            label: `${field.name}.${column.header}`,
+          })),
+        } : {}),
       })),
     },
     {

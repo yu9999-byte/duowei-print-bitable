@@ -17,6 +17,8 @@ export type NormalizedField = {
   isLink?: boolean;
   linkKind?: "reference" | "detail";
   arrayColumns?: Array<{ field: string; header: string; width?: number }>;
+  /** All selectable linked columns, keyed by stable target-field ID. */
+  detailColumns?: Array<{ field: string; header: string; width?: number }>;
 };
 
 export function isDetailLinkField(field: NormalizedField): boolean {

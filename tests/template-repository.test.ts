@@ -130,6 +130,44 @@ test("SPEC-BATCH-10: changing one template batch layout keeps its id, count, and
   assert.deepEqual(changed.templates.find((item) => item.id === "second"), siblingBefore);
 });
 
+test("BUG-BATCH-SAVE: selected record identities persist per template across repository instances", async () => {
+  const fixture = memoryStorage();
+  const context = { baseId: "base-orders", tableId: "table-orders" };
+  const firstRepository = createTemplateRepository(fixture.storage);
+  const first = await firstRepository.upsert(context, template(), {
+    id: "first", name: "发货单", expectedRevision: null,
+  });
+  const second = await firstRepository.upsert(context, template(), {
+    id: "second", name: "对账单", expectedRevision: first.revision,
+  });
+  const selected = await firstRepository.setBatchRecords(context, "first", ["rec-a", "rec-b"], second.revision);
+  assert.deepEqual(selected.templates.find((item) => item.id === "first")?.savedBatchRecordIds, ["rec-a", "rec-b"]);
+  assert.equal(selected.templates.find((item) => item.id === "second")?.savedBatchRecordIds, undefined);
+
+  const reopened = createTemplateRepository(fixture.storage);
+  const reloaded = await reopened.list(context);
+  assert.deepEqual(reloaded.templates.find((item) => item.id === "first")?.savedBatchRecordIds, ["rec-a", "rec-b"]);
+  const edited = await reopened.upsert(context, template("another"), {
+    id: "first", name: "发货单", expectedRevision: reloaded.revision,
+  });
+  assert.deepEqual(edited.templates.find((item) => item.id === "first")?.savedBatchRecordIds, ["rec-a", "rec-b"]);
+  assert.ok(!JSON.stringify(edited.templates.find((item) => item.id === "first")?.template).includes("rec-a"));
+});
+
+test("BUG-BATCH-SAVE: clearing a batch is durable and stale windows cannot overwrite it", async () => {
+  const fixture = memoryStorage();
+  const context = { baseId: "base-orders", tableId: "table-orders" };
+  const repository = createTemplateRepository(fixture.storage);
+  const first = await repository.upsert(context, template(), {
+    id: "first", name: "发货单", expectedRevision: null, savedBatchRecordIds: ["rec-a"],
+  });
+  await assert.rejects(() => repository.setBatchRecords(context, "first", ["rec-b"], null), /其他窗口更新/);
+  const cleared = await repository.setBatchRecords(context, "first", [], first.revision);
+  assert.deepEqual((await repository.list(context)).templates[0].savedBatchRecordIds, []);
+  assert.notEqual(cleared.revision, first.revision);
+  await assert.rejects(() => repository.setBatchRecords(context, "first", ["rec-a", "rec-a"], cleared.revision), /记录无效/);
+});
+
 test("SPEC-SAVE-01/04: v1 stays untouched until a valid v2 mutation, stale revision cannot overwrite", async () => {
   const fixture = memoryStorage();
   const repository = createTemplateRepository(fixture.storage);

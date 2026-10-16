@@ -131,7 +131,9 @@ test("SPEC-SRC-01/02: current Base fields and system values form two data-source
       children: [
         { id: fieldDataSourceId("order-no"), label: "订单编号" },
         { id: fieldDataSourceId("customer"), label: "客户名称" },
-        { id: fieldDataSourceId("lines"), label: "订单明细", isArray: true },
+        { id: fieldDataSourceId("lines"), label: "订单明细", isArray: true,
+          columns: [{ field: "商品", header: "商品" }],
+          children: [{ id: "__duowei_field_lines.__duowei_column_text_5546_54c1", label: "订单明细.商品" }] },
       ],
     },
     {
@@ -244,6 +246,43 @@ test("SPEC-OUT-02: output preparation resolves multiple text tokens without muta
   assert.equal(output.variables.__duowei_render_summary, "客户：甲公司，订单号：PO-0001");
   assert.equal((template.pages as any)[0].elements[0].content,
     `客户：${customerToken}，订单号：${orderToken}`);
+});
+
+test("SPEC-SRC-08: deleted stable field IDs render a historical invalid state without leaking tokens", () => {
+  const deletedToken = `@${fieldDataSourceId("deleted")}`;
+  const template = {
+    pages: [{ id: "p", elements: [{
+      id: "deleted-field",
+      type: "text",
+      content: `旧值：${deletedToken}`,
+      variable: deletedToken,
+    }] }],
+    canvasSize: { width: 794, height: 1123 },
+    ext: {
+      fieldBindings: { deleted: "已删除字段" },
+      availableVariables: buildDataSourceCatalog(fields),
+    },
+  };
+
+  const output = prepareTemplateForOutput(template, {
+    [fieldDataSourceId("customer")]: "甲公司",
+  });
+
+  assert.equal(output.variables["__duowei_render_deleted-field"],
+    "旧值：[字段已失效：已删除字段]");
+  assert.ok(!JSON.stringify(output).includes("@__duowei_field_deleted"));
+});
+
+test("SPEC-SRC-08: returned empty values remain empty instead of becoming unreadable", () => {
+  const emptyJob: PrintJob = {
+    source: { baseId: "base", tableId: "table", recordIds: ["rec"] },
+    table: { name: "订单", fields: [{ id: "note", name: "备注", type: "1" }] },
+    documents: [{ recordId: "rec", values: { 备注: "" } }],
+    generatedAt: "2026-10-12T02:00:00.000Z",
+  };
+  const variables = getDocumentVariables(emptyJob, 0);
+  assert.equal(Object.prototype.hasOwnProperty.call(variables, fieldDataSourceId("note")), true);
+  assert.equal(variables[fieldDataSourceId("note")], "");
 });
 
 test("SPEC-SRC-04: legacy name bindings migrate by unique name and field-ID bindings survive rename", () => {

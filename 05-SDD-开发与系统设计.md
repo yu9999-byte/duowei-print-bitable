@@ -1,5 +1,11 @@
 <title>多维打印 — SDD 开发与系统设计</title>
 
+## 2026-10-14 记录视图窄面板适配
+
+按 ADR-0029，预览在应用外层测量宽度，iframe 保持纸张原宽、只做屏幕缩放并由外层占位；编辑入口把当前模板复制后设定适宽初始 `zoom` 再交给真实设计器，设计器仍拥有内部滚动和后续缩放。打印/PDF 继续消费自然尺寸的 `RenderedPrintJob`，不消费预览显示比例。`BUG-0013` 通过 `designer-selection.ts` 在脏状态和保存前消除引擎选择副作用的 `zIndex` 差异，显式图层操作仍保留；自动化 Goal v22 暂停，不纳入本轮发布候选。
+
+2026-10-15 的补充设计：图层操作只接受事件路径中的实际按钮或菜单项，忽略画布祖先包含的操作文字；Red→Green 用例覆盖该误判。隔离线上候选已作为记录视图 `1.0.57` 发布，正式独立测试 Base 的点选和适宽通过。连续纸对动态表格/关联明细仍按 `SPEC-CONT-03` 拒绝；不把默认批量的循环明细能力泛化到连续纸。
+
 # 1. 开发方法
 
 本项目采用 Specification-Driven Development（规格驱动开发）和 Test-Driven Development（测试驱动开发）。每个垂直切片按以下顺序执行：
@@ -21,7 +27,7 @@
 | BitableGateway | base/table/record IDs | SDK 可读字段、记录、关联元数据 | 最多 4 个主记录读取 worker；索引保留选择顺序；任一核心记录失败即停发后续任务，等待在途任务收尾再拒绝整批。字段级不可读仍按 SPEC-DATA-02 降级；按 SDK `property.multiple` 把关联分类为单值 `reference` 或多值 `detail`，前者读取可读文本，后者才展开关联 ID/目标表；每次主表、字段、记录及关联元数据读取都有 15 秒有界超时，超时作为候选失败而不是永久 pending；权限遵循当前用户，真实分页/限流待验证 |
 | ReadableFieldAdapter（网关内） | SDK 字段与 `getCellString` | 可打印文本或字段级诊断 | 不输出原始对象字符串，不存持久副本 |
 | PrintJobBuilder | 上下文、字段、记录 | 顺序稳定的 documents[] | 保留每条记录与关联行边界 |
-| BatchPrintSession | 宿主 recordId、当前模板 ID、已确认 recordIds 和摘要 | `single-ready` / `batch-ready`、模板归属、数量和摘要 | 上限 50；批量会话只属于发起模板，切换其他模板退出批量；候选 PrintJob 留在编排层，成功前不修改会话；不持久化业务值 |
+| BatchPrintSession | 宿主 recordId、当前模板 ID、已确认 recordIds 和摘要 | `single-ready` / `batch-ready`、模板归属、数量和摘要 | 上限 50；提交前完成读取、渲染、模板集合写入；切换目标模板按其持久 ID 恢复，失败保留旧会话；不持久化字段值 |
 | BatchEditProjection | 一份公共模板、PrintJob、当前布局 | 默认全部页面、连续完整长画布或标签完整网格；元素到记录值的映射；可回收公共模板 | 只存在于 `batch-edit` 内存；不拥有批次或仓库存储；不得把业务值、记录 ID、实例副本或投影元数据写入模板 |
 | DataSourceCatalog | PrintJob 当前字段、插件系统值 | “字段/系统”数据源树与运行时值 | 字段不写死；旧模板不拥有当前数据源目录；系统 ID 使用插件命名空间；系统打印日期由任务 generatedAt 经 Date 本地年/月/日格式化，不截取 UTC 字符串、不另取当前时间；无效时刻拒绝解析，同名业务字段不被覆盖 |
 | DataSourceTokenCodec | 稳定字段/系统 ID、当前标签、当前记录值 | 持久 Token、编辑标签、失焦/输出值 | 三层表示可逆；不以字段名持久绑定，不把当前值写进模板，不向用户暴露内部 ID |
@@ -32,13 +38,15 @@
 | BatchLayoutTransaction | 候选绑定、渲染、全量编辑投影、仓库写入、旧画布恢复回调 | 已渲染页面与已保存模板集合 | 严格按候选→渲染→投影→保存执行；失败恢复旧画布，调用方成功返回前不提交预览/会话状态 |
 | TemplateRepository | base/table、版本化模板集合 | 多模板、唯一默认项或只读回退结果 | 飞书官方 `bridge.setData` 定义为“在当前 base 中存储自定义内容”，安装版 SDK 定义为按 key 读写持久化数据；仓库 key 不含成员 ID。bridge 未设置键实测返回 `{}`，空普通对象按无值处理；v1 只读迁移；非空不可读模板不覆盖，回退会话禁用保存；保存前递归移除运行记录、记录 ID、设计器变量、表格样本和凭证形态字段，读取含禁存数据的旧信封时零写入拒绝；权限与冲突显式。官方措辞支持 Base 作用域判断，但跨成员仍需正式双账号证据；用户已将该验证移出 Goal v15，不能写成已通过 |
 | DesignerAdapter | 模板、变量、任务 | canonical rendered pages、全量编辑投影、公共模板同步、组件拖拽、原生属性面板、打印、已校验 PDF Blob | 直接调用安装版 Web Component；每个投影元素绑定其记录运行值，提交交互后回收并重投影；只关闭重复元素库/结构面板，保留属性面板；输出从公共模板生成，主预览与打印复用同一页对象；屏幕预览以 screen-only 样式区分固定纸页和长纸，不污染打印/PDF；PDF 先校验文件头、页数和大小再提交下载，不造替代引擎 |
-| WorkspaceShell | PrintJob、模板集合、DesignerAdapter | `WorkspaceMode` 与 `WorkspaceSurface`、所选模板、数据源/组件操作区和当前模板批量排版 | 四种表面保持既有目录/编辑职责；批量编辑显示“已选 N 条、全部记录可滚动编辑”；批量会话绑定发起模板，预览切到其他模板时原子恢复目标模板的宿主当前记录；组件可拖入、数据源只可复制，默认/连续/标签只在批量工作区切换当前模板，右侧仍为真实 Web Component |
+| WorkspaceShell | PrintJob、模板集合、DesignerAdapter | `WorkspaceMode` 与 `WorkspaceSurface`、所选模板、数据源/组件操作区和当前模板批量排版 | 四种表面保持既有目录/编辑职责；选择记录后将 ID 保存到当前模板条目，切换和重开重新读取实时值；不同模板批次互不串用；组件可拖入、数据源只可复制，右侧仍为真实 Web Component |
 
 组件拖拽继续采用锁定版 `vue-print-designer@1.7.39` 的 `application/json` `{type}` 契约，让引擎创建默认组件。数据源不再写入拖拽载荷；复制动作携带稳定字段/系统 ID 与当前标签，粘贴适配层把稳定绑定插入当前文本组件，同时只向用户显示 `@字段名`。关联数组仍由表格组件的专用配置处理。该适配随引擎版本升级复核；不得恢复“拖数据源创建元素”的旧路径。
 
 当前引擎契约不等于“同一组件多字段”：带 `payload` 的字段拖放新增元素，变量型拖放对已有文本组件更新单一绑定。Goal v2 直接移除数据源拖放语义，先通过 Token 共存、顺序、重开和输出测试，再决定使用公开内容编辑 API 或版本固定的适配；不得把字段复制粘贴退化为替换单一 `variable`。
 
-正式环境已经证明“只保存稳定 Token、仅在输出前临时解析”不足以完成编辑闭环：旧版引擎内容编辑会把内部 Token 当普通文本，失焦后仍原样显示。Goal v3 已在 DesignerAdapter 内实现生命周期：`content-editing` 显示友好标签，`canvas-resolved` 使用当前记录运行时变量，`persisting` 转回稳定 Token，`output` 按当前 PrintJob 解析。模式转换的单元和适配器替身测试已通过；2026-10-06 当前灰度版又在正式 Base 完成双字段编辑、失焦、保存重开、再次编辑、跨记录解析和实际 PDF。字段真实改名、删除/无权/歧义仍需受控 E2E，不能从正常字段路径外推。
+正式环境已经证明“只保存稳定 Token、仅在输出前临时解析”不足以完成编辑闭环：旧版引擎内容编辑会把内部 Token 当普通文本，失焦后仍原样显示。Goal v3 已在 DesignerAdapter 内实现生命周期：`content-editing` 显示友好标签，`canvas-resolved` 使用当前记录运行时变量，`persisting` 转回稳定 Token，`output` 按当前 PrintJob 解析。2026-10-06 的正式灰度完成正常双字段编辑、失焦、保存重开、再次编辑、跨记录解析和实际 PDF；Goal v21 又在独立测试 Base 证明改名保持稳定 ID、删除后同名新字段不能劫持旧绑定，并用真实设计器覆盖三种排版。不可读字段没有通过修改权限制造现场，仍以网关、缺值/空值和真实引擎降级测试作为当前证据边界。
+
+Goal v21 将 `output` 阶段也收敛到同一 Codec：`createPrintJobDataSourceTokenCodec` 用当前字段定义和模板历史标签创建解析器，DesignerAdapter、`prepareTemplateForOutput`、连续及标签布局复用它。`getDocumentVariables` 只为记录实际返回的字段建立稳定键，因此“字段存在但值键缺失”成为不可读状态，而不是 `undefined → 空白`；删除字段则因不在当前定义中使用历史标签显示失效。模板快照继续保留原稳定 ID，恢复权限或字段元数据后可重新解析。
 
 同名字段的标签不足以确定绑定。Codec 在持久化时先把本次粘贴记录的偏移对应到当前文本中该标签出现的位置，再将仍保留的旧引用按原顺序填入；偏移、数量或字段 ID 不吻合时返回歧义，DesignerAdapter 阻止保存。此前“旧引用在前、新引用在后”的队列规则已由 Red 测试证实可能误绑，不再使用。
 
@@ -197,7 +205,7 @@ Goal v15 以 ADR-0023 为准，将创建和排版拆成两个正交状态：`Tem
 
 # 13. Goal v18：模板级批量、字段生成和屏幕纸张边界
 
-批量候选提交时把 `selectedTemplateId` 写入内存态 `BatchPrintSession.templateId`。模板切换统一调用 `shouldExitBatchOnTemplateSwitch`；只有切回同一归属模板才可保留批次，其他模板必须先加载宿主当前记录并完成目标模板渲染，再原子提交单条会话。失败恢复使用原设计器模板和原 PrintJob，不允许目标模板与旧批次页面混合。
+批量候选先用真实 Base 数据读取并完整渲染，再把有序记录 ID 写入当前模板集合条目 `savedBatchRecordIds`；所有门通过后才提交 PrintJob、预览和内存态 `BatchPrintSession.templateId`。模板切换按目标条目 ID 重新读取；目标无保存选择才回宿主单条。关闭重开按默认模板恢复。存储层仅保存 ID，不保存业务值；失败恢复原设计器模板、原 PrintJob 和旧预览。
 
 关联分类只在 BitableGateway 发生一次，并随 `NormalizedField.linkKind` 向下游传播。正式 SDK 证明 `property.multiple` 不是单向自关联的充分判据：`FieldType.SingleLink` 且 `property.tableId === selection.tableId` 时优先分类为 `reference`，其余关联再以 `multiple === true` 分类为 `detail`。`reference` 不建立关联 reader、不生成 `arrayColumns`，DataSourceCatalog 不标记为数组，TemplateGenerator 将其作为普通字段；`detail` 沿用既有完整展开、空态和原生 table 分页。规则不读取字段名称。为兼容既有测试/旧内存结构，缺少 `linkKind` 且已有 `isLink/arrayColumns` 的字段继续按 detail 处理。
 
@@ -210,3 +218,39 @@ Goal v15 以 ADR-0023 为准，将创建和排版拆成两个正交状态：`Tem
 50 条边界必须下沉到 `prepareBatchCandidate` 事务入口。调用方传入已经去重并冻结的记录 ID；事务先调用领域校验，再允许执行 `loadJob`。因此 51 条路径不会调用主记录读取、上下文复核或设计器渲染，页面层可以保留即时提示，但不再是唯一安全边界。成功读取后的 PrintJob 记录顺序必须与冻结请求完全一致，不能让网关返回子集或重排后继续提交。
 
 超时重试使用只存在于内存的 `BatchRetryRequest`：保存失败时的 Base、表、视图、宿主记录、模板 ID 和有序记录 ID，不保存字段值或模板副本。点击重试直接复用该快照，不重新打开官方选择器；进入事务前先比较当前上下文和模板。上下文不一致时丢弃快照并要求重新选择。候选成功后清除快照；非超时失败不提供误导性重试。三种排版只在同一候选事务的 render 回调内分流，因此共享相同的容量、超时和原子提交规则。
+
+# 15. Goal v22：自动化与组件可用性
+
+开发顺序固定为：
+
+1. 保留 Goal v21 工作区并记录基线测试/构建，不在未提交变更上执行重置或覆盖；
+2. 通过现有主流程测试和真实引擎矩阵发现 P0/P1；每个缺陷先补失败测试；
+3. 以纯领域模块实现自动化任务校验、幂等键、最小载荷和结果合同；
+4. 建立 AutomationAction 适配层，飞书 SDK、HTTP 和附件上传均通过端口注入，单元测试不依赖真实权限；
+5. 建立 TemplateRegistry 和 RendererService 合同，再接入受控无头浏览器；
+6. 对首批组件逐项执行 create/configure/save/reload/render 矩阵，缺什么补什么，不重复造真实设计器已有属性面板；
+7. 本地全部 Green 后，才进入独立测试 Base、自动化 Block、权限和灰度授权门。
+
+自动化修订按 TDD 分三段执行：先用失败测试证明正式模板下拉读取不到当前表已保存模板，并锁定保存/改名/删除后的目录变化；再把现有同步动作明确命名为标准模式，验证其结果能被同一流程后续“修改记录”消费；最后新增后台模式领域状态机、字段类型过滤、持久任务和应用身份回写。PDF/PNG 继续复用同一 Renderer，不引入 DOCX/XLSX 分支。
+
+标准模式和后台模式共享模板、记录读取、渲染、附件校验与幂等领域合同，但提交边界不同：标准模式在 Action execute 返回最终附件；后台模式在 execute 只受理持久任务，Worker 负责更新状态、生成文件和原子回写附件/错误。任何实现都不得用前端 `setTimeout`、进程内未持久 Promise 或延长飞书动作超时来冒充后台模式。
+
+自动化核心不读取 window/document，也不依赖 Vue。RendererService 是唯一允许浏览器运行时的服务。记录视图不得把当前记录数据写入 Registry；AutomationAction 不向 RendererService 发送飞书令牌。每次失败保留 traceId、stage 和安全错误码，日志不写记录全文或凭据。
+
+外部服务或灰度尚未可用时，阶段状态只能是“本地合同/集成 Green，正式未接入”。2026-10-13 已按明确授权创建自动化能力、上传小组件并提交包含附件权限的灰度版本；应用 `1.0.48` 已仅向 `F225904757` 灰度，但生产服务健康检查和模板同步未通过。域名、会话校验、生产密钥、持久化服务、标准/后台模式和真实触发必须逐项回读，不因版本已灰度而推定完成。
+
+本地 Green 后的外部门顺序固定为：先配置可验证飞书会话的 Registry 写授权服务与持久存储，再部署锁定版本的 HTTPS Renderer/浏览器运行时，然后在现有“多维打印”应用新增自动化 BlockType、最小附件权限和必要域名，最后只在独立测试 Base 做单记录触发。记录视图只有在 bridge 保存/重命名/删除成功后才调用同步适配器；保存和重命名发送同一稳定 ID 的最新快照，删除发送墓碑，Registry 按稳定 ID 替换旧修订并跨重启保留删除状态。同步草稿只发送 `baseToken/tableId/template`，授权服务从真实会话取得 `tenantKey/principalId/canWrite` 并返回“权威完整 body＋精确签名”，同步适配器必须原样使用，不得由浏览器提供或覆盖租户。同步失败显示“模板已保存/目录已更新，但自动化同步失败”，不得回滚或伪装 bridge 操作失败。服务签名只能来自后端环境变量；不得下发到记录视图包。记录视图上传前强制检查两个公开 HTTPS 端点，缺失配置不得产生可发布包。
+
+独立 Block 工程固定为 `automation-block/src/register.ts` → `readAutomationBlockConfig(process.env)` → `registerFeishuAutomationBlock(basekit, config)`。配置解析先于动作注册并 fail closed；源代码、Block 清单、测试和前端包都不允许出现真实密钥。平台创建后 `automation-block/block.json.blockTypeID` 固定为 `blk_6ab0a4c12f818bde89e6d397`；根构建仍只证明类型检查，创建、上传、审核、灰度和正式 E2E 必须分别记录。
+
+Registry 持久化通过 `TemplateRegistryStore` 反转依赖：鉴权、作用域和模板清理属于服务层，持久化介质属于部署层。单实例 MVP 使用版本化 JSON 文件 Store，所有读写进入同一串行队列，写入先生成同目录临时文件再原子替换；重启恢复、并发写不丢模板、损坏文件拒绝覆盖都必须有集成测试。正式路径必须位于持久卷；若未来水平扩容，先替换为带事务/唯一键的数据库 Store，再增加实例，禁止以共享文件冒充多实例安全。
+
+SEC-01 对记录视图仍保持“零直接 Authorization/Bearer”。自动化服务端新增一个审计例外：`feishu-action-adapters.ts` 可用当前 `context.tenantAccessToken` 构造一次飞书 OpenAPI Bearer 请求，目标必须是 `open.feishu.cn/base/v3/.../records/batch_get`，并使用 `select_fields` 最小投影；该令牌不得进入日志、模板、Registry、Renderer、错误文本或测试产物。私有服务统一使用独立 `x-duowei-service-signature`，不使用飞书 Authorization。
+
+OAuth 写授权遵循“先证明用户和作用域，再签发一次精确写请求”：记录视图首次同步只得到 `AUTH_REQUIRED + connectUrl`，弹出飞书授权后由服务端完成一次性 state、PKCE、用户身份和目标 Base 编辑权限校验；会话 Cookie 绑定 Base/table，跨来源、跨表或过期后重新连接。回调页面使用 CSP nonce、HTML 转义和安全 JSON 序列化，并严格核对 popup `source/origin`。连接成功后只重试当前模板同步，不触发保存、发布或其他模板写入。
+
+2026-10-14 权限修订：OAuth scope 使用目标应用已经开通的 `bitable:app`。飞书 `drive/v1/permissions/{baseToken}/members/auth?type=bitable&action=edit` 官方接口接受该 scope；`auth_result=true` 仍是会话签发的必要条件，用户身份、租户、Base/table 作用域、来源和 PKCE/state 校验不变。禁止以 Base 元数据读取成功代替 edit 权限校验。正式服务已部署候选修复，但独立测试 Base 的实际连接和自动化输出不能由本地通过推定。
+
+可部署服务采用单进程八路由边界和一个 Chromium 生命周期；新增后台任务提交与飞书事件回调。CORS 白名单、路由方法、请求体上限、签名、作用域及错误输出逐层 fail closed。Renderer 每次创建隔离页面并在成功、异常、超时或调用方取消后关闭；默认 120 秒只是服务保护上限，不改变上游任务幂等。后台 Worker 从持久任务 Store 恢复任务，使用已验证 app_ticket 换取短期应用/租户令牌，完成附件上传后只更新用户选择字段。Docker 镜像只打包代码、锁文件与浏览器运行时，App Secret、Verification Token 和四枚至少 32 字节服务密钥必须由运行环境注入；Registry、后台任务和 app_ticket 文件路径必须位于挂载持久卷。
+
+本地完成证据为 `324/324`、记录视图生产构建 `assets/main.8388ad3e.js`、自动化服务类型检查/构建，以及完整服务健康检查与真实 2 页 PDF/1 页 PNG。Action 双模式、字段类型过滤、后台任务状态机、失败安全、重复触发复用、跨重启恢复、app_ticket 回调、应用商店令牌链、附件上传和所选字段最小回写均已 Green。生产 HTTPS 部署、飞书 OAuth/事件回调与域名配置、记录视图/自动化 Block 补丁上传和正式自动化 E2E 仍是后续外部门；不得以本地容器或构建成功替代。

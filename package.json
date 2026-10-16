@@ -6,11 +6,13 @@
   "scripts": {
     "test": "node --test tests/*.test.ts",
     "dev": "cross-env NODE_ENV=development webpack-dev-server --mode development --config record-view/webpack.config.cjs",
-    "build": "vue-tsc -b && cross-env NODE_ENV=production webpack --mode production --config record-view/webpack.config.cjs",
-    "upload": "npm run build && cd record-view && opdev upload ./dist -t block -v patch -d \"多维打印记录视图插件\""
+    "check:automation-block": "tsc -p automation-block/tsconfig.json --noEmit",
+    "build": "vue-tsc -b && npm run check:automation-block && cross-env NODE_ENV=production webpack --mode production --config record-view/webpack.config.cjs",
+    "upload": "node scripts/check-record-view-sync-env.mjs && npm run build && cd record-view && opdev upload ./dist -t block -v patch -d \"多维打印记录视图插件\""
   },
   "dependencies": {
     "@lark-base-open/js-sdk": "1.0.2",
+    "@lark-opdev/block-basekit-server-api": "1.0.6",
     "@lark-opdev/block-bitable-api": "0.4.1-alpha.11",
     "vue": "3.5.13",
     "vue-print-designer": "1.7.39"

@@ -44,6 +44,20 @@ test("SPEC-LABEL-01/02: seven ordered records fill a native 2x3 grid with combin
   assert.deepEqual(source, template());
 });
 
+test("SPEC-SRC-08/LABEL: deleted fields stay explicit in every label item", () => {
+  const deletedToken = `@${fieldDataSourceId("deleted")}`;
+  const source = template();
+  source.pages[0].elements[1].content = `旧值：${deletedToken}`;
+  source.pages[0].elements[1].variable = deletedToken;
+  (source as any).ext = { fieldBindings: { deleted: "已删除字段" } };
+
+  const output = prepareLabelLayout(source, job);
+
+  assert.deepEqual(output.variables.labels.map((row: any) => row.__duowei_render_summary),
+    job.documents.map(() => "旧值：[字段已失效：已删除字段]"));
+  assert.ok(!JSON.stringify(output).includes("@__duowei_field_deleted"));
+});
+
 test("SPEC-LABEL-01: a new label template is an editable native grid bound to actual fields", () => {
   const created = generateLabelTemplate(job);
   assert.equal((created.pages[0].elements[0] as any).type, "multiLabel");

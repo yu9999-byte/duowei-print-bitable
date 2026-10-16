@@ -1,4 +1,5 @@
 const path = require("node:path");
+const webpack = require("webpack");
 
 process.chdir(__dirname);
 
@@ -32,6 +33,11 @@ module.exports = {
   module: {
     rules: [
       {
+        test: /web-component-.*\.js$/,
+        include: /node_modules[\\/]vue-print-designer[\\/]dist[\\/]/,
+        loader: path.resolve(projectRoot, "scripts/designer-table-loader.cjs"),
+      },
+      {
         test: /\.vue$/,
         loader: "vue-loader",
         options: {
@@ -56,6 +62,13 @@ module.exports = {
   },
   plugins: [
     new VueLoaderPlugin(),
+    new webpack.DefinePlugin({
+      __DUOWEI_TEMPLATE_SYNC_CONFIG__: JSON.stringify({
+        authorizationEndpoint: process.env.DUOWEI_TEMPLATE_SYNC_AUTHORIZATION_ENDPOINT ?? "",
+        registryEndpoint: process.env.DUOWEI_TEMPLATE_REGISTRY_WRITE_ENDPOINT ?? "",
+        bridgeEndpoint: process.env.DUOWEI_TEMPLATE_SYNC_BRIDGE_ENDPOINT ?? "",
+      }),
+    }),
     new BitableAppWebpackPlugin({ open: false }),
     new HtmlWebpackPlugin({
       template: path.resolve(__dirname, "index.html"),

@@ -2,6 +2,7 @@ import { isDetailLinkField, type PrintJob, type NormalizedField, type PrintableV
 import {
   buildDataSourceCatalog,
   fieldDataSourceId,
+  detailFieldDataSourceId,
   type DesignerDataSourceGroup,
 } from "./data-sources.ts";
 
@@ -287,7 +288,7 @@ export function generateTemplate(job: Pick<PrintJob, "table" | "documents">): De
     ensureSpace(306);
     const token = variable(fieldDataSourceId(field.id));
     const emptyStateToken = variable("__duowei_print_empty_" + field.id);
-    const columns = field.arrayColumns?.length
+    const columns = field.detailColumns?.length ? field.detailColumns.slice(0, 5) : field.arrayColumns?.length
       ? field.arrayColumns
       : [{ field: "value", header: field.name, width: CONTENT_WIDTH }];
     const sampleRows = Array.isArray(sample[field.name])
@@ -334,7 +335,10 @@ export function generateTemplate(job: Pick<PrintJob, "table" | "documents">): De
       height: 220,
       variable: token,
       columns,
-      data: sampleRows,
+      data: field.detailColumns?.length ? [] : sampleRows,
+      ...(field.detailColumns?.length ? { detailTemplateRows: [Object.fromEntries(columns.map((column) => [
+        column.field, variable(detailFieldDataSourceId(field.id, column.field)),
+      ]))] } : {}),
       showHeader: true,
       showFooter: false,
       tfootRepeat: true,

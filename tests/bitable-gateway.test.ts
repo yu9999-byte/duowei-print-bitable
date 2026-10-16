@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { bitable } from "@lark-base-open/js-sdk";
 import { BitableReadTimeoutError, loadPrintJob } from "../src/host/bitable-gateway.ts";
+import type { PrintJob } from "../src/core/print-job.ts";
+
+function legacyDetailRows(job: PrintJob) {
+  const columns = job.table.fields.find((field) => field.id === "lines")!.arrayColumns!;
+  return (job.documents[0].values.明细 as Array<Record<string, unknown>>)
+    .map((row) => Object.fromEntries(columns.map((column) => [column.field, row[column.field]])));
+}
 
 type GetTable = typeof bitable.base.getTable;
 
@@ -33,6 +40,7 @@ function installBaseFixture(
   linkType: 18 | 21,
   recordIds: unknown[],
   unreadableFieldId?: string,
+  multiple = true,
 ) {
   const recordReads: Array<[string, boolean | undefined]> = [];
   const linkedFields = [
@@ -85,7 +93,7 @@ function installBaseFixture(
           id: "lines",
           name: "明细",
           type: linkType,
-          property: { tableId: "table-lines", multiple: true },
+          property: { tableId: "table-lines", multiple },
         },
       ];
     },
@@ -117,6 +125,16 @@ function installBaseFixture(
 }
 
 for (const linkType of [18, 21] as const) {
+  test(`detail source supports single-cardinality cross-table links of type ${linkType}`, async () => {
+    const originalGetTable = bitable.base.getTable;
+    bitable.base.getTable = installBaseFixture(linkType, ["line-1"], undefined, false).getTable;
+    try {
+      const job = await loadPrintJob({ baseId: "base", tableId: "table-orders" }, ["order-1"]);
+      assert.equal(job.table.fields[1].linkKind, "detail");
+      assert.equal(job.table.fields[1].detailColumns?.length, 6);
+      assert.equal((job.documents[0].values.明细 as Array<Record<string, string>>)[0]["__duowei_column_line-product"], "笔记本");
+    } finally { bitable.base.getTable = originalGetTable; }
+  });
   test(`SPEC-LINK-01/02: gateway expands field type ${linkType} with target-view order`, async () => {
     const originalGetTable = bitable.base.getTable;
     const fixture = installBaseFixture(linkType, ["line-2", "line-1"]);
@@ -128,7 +146,10 @@ for (const linkType of [18, 21] as const) {
       );
 
       assert.deepEqual(fixture.recordReads, [["order-1", true]]);
-      assert.deepEqual(job.table.fields[1], {
+      const { detailColumns, ...legacyField } = job.table.fields[1];
+      assert.equal(detailColumns?.length, 6);
+      assert.deepEqual(detailColumns?.[5], { field: "__duowei_column_line-internal", header: "内部字段" });
+      assert.deepEqual(legacyField, {
         id: "lines",
         name: "明细",
         type: String(linkType),
@@ -142,7 +163,7 @@ for (const linkType of [18, 21] as const) {
           { field: "批次", header: "批次" },
         ],
       });
-      assert.deepEqual(job.documents[0].values.明细, [
+      assert.deepEqual(legacyDetailRows(job), [
         { 产品: "鼠标", 数量: "5", 单价: "200", 备注: "", 批次: "B" },
         { 产品: "笔记本", 数量: "2", 单价: "5000", 备注: "加急", 批次: "A" },
       ]);
@@ -365,7 +386,7 @@ test("SPEC-DATA-02: an unreadable linked field degrades while other detail cells
       { baseId: "base-test", tableId: "table-orders", viewId: "view-orders" },
       ["order-1"],
     );
-    assert.deepEqual(job.documents[0].values.明细, [{
+    assert.deepEqual(legacyDetailRows(job), [{
       产品: "笔记本",
       数量: "2",
       单价: "【字段不可读取：单价（无字段权限）】",
