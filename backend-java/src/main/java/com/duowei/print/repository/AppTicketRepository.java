@@ -17,4 +17,20 @@ public class AppTicketRepository {
                 appId,
                 ticket);
     }
+
+    public String get(String appId) {
+        java.util.List<String> tickets =
+                db.query(
+                        "SELECT ticket,received_at FROM duowei_automation_app_ticket WHERE app_id=? LIMIT 1",
+                        (row, index) -> {
+                            String ticket = row.getString("ticket");
+                            if (ticket == null
+                                    || ticket.trim().isEmpty()
+                                    || row.getTimestamp("received_at") == null)
+                                throw new IllegalStateException("app_ticket 持久化数据无效");
+                            return ticket;
+                        },
+                        appId);
+        return tickets.isEmpty() ? null : tickets.get(0);
+    }
 }

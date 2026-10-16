@@ -35,7 +35,7 @@ public class BackgroundJobRepository {
 
     public List<Map<String, Object>> recoverable() {
         return db.queryForList(
-                "SELECT job_id,submission FROM duowei_automation_background_job WHERE status IN ('queued','processing') ORDER BY created_at");
+                "SELECT job_id,task_key,status,attempt,submission FROM duowei_automation_background_job WHERE status IN ('queued','processing') ORDER BY created_at");
     }
 
     public void processing(String key) {

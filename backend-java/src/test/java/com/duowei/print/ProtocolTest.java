@@ -7,6 +7,16 @@ import org.junit.jupiter.api.Test;
 
 class ProtocolTest {
     @Test
+    void matchesNodeSha256Vector() throws Exception {
+        String canonical =
+                Protocol.canonical(
+                        Protocol.JSON.readTree(
+                                "{\"z\":[1,-0.0,0.000001,0.0000001,1e21],\"a\":\"中文\"}"));
+        assertEquals("{\"a\":\"中文\",\"z\":[1,0,0.000001,1e-7,1e+21]}", canonical);
+        assertEquals("i7HYEwhQl9x4rgHi1jYfjK-QTRKcAmv4H_vzcgO2W9I", Protocol.digest(canonical));
+    }
+
+    @Test
     void verifiesAndRejectsTampering() throws Exception {
         byte[] key = new byte[32];
         java.util.Arrays.fill(key, (byte) 42);

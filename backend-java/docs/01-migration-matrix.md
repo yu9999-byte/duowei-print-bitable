@@ -17,6 +17,7 @@
 | background-automation.service | service/job | 临时租户凭证、单Worker、凭证失效、恢复 | 生命周期与间隔配置 |
 | feishu-background-ports | integration/feishu | 字段分页及类型、最小更新、20MB上传 | 成功上传/最小字段回写与失败脱敏模拟测试通过；真实飞书待验 |
 | feishu-app-ticket / store | service/repository | challenge、token、app_id、事件、持久化 | challenge、错误token/跨应用拒绝、有效ticket持久化调用测试通过 |
+| createMarketplaceTokenProvider / AppTicketStore.get | integration/feishu、repository | 持久化ticket读取、app_access_token及tenant_access_token交换、缓存提前刷新 | 已补齐可选MarketplaceTokenProvider及ticket读取；令牌交换、缓存提前刷新、缺ticket拒绝测试通过；当前Worker仍使用临时租户凭证；真实数据库及飞书待验 |
 | main / filters | config/exception | CORS、请求上限、错误脱敏 | JSON与2MB限制、请求体保留及trace header测试通过；JSON、方法、内容类型错误协议及 trace header 已补测 |
 | view / client resources | resources | 浏览器引擎、静态资源与入口 | 识别托管专用边界 |
 

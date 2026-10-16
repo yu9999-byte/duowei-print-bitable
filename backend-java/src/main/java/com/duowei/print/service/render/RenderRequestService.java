@@ -39,11 +39,11 @@ public class RenderRequestService {
             throw new IllegalArgumentException("渲染请求无效");
         }
         JsonNode output = body.path("output");
-        String type = Protocol.required(output, "type");
+        String type = output.path("type").isTextual() ? output.path("type").textValue() : "";
         if (!("pdf".equals(type) && output.path("pageLimit").isNull())
                 && !("png".equals(type)
-                        && output.path("pageLimit").isIntegralNumber()
-                        && output.path("pageLimit").asInt() == 1)) {
+                        && output.path("pageLimit").isNumber()
+                        && output.path("pageLimit").doubleValue() == 1.0)) {
             throw new IllegalArgumentException("自动化输出类型或页数无效");
         }
         Protocol.safeSnapshot(body.path("template").path("snapshot"));

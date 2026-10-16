@@ -21,7 +21,7 @@ public class EventService {
     }
 
     public ResponseEntity<?> event(JsonNode body) {
-        if (body.has("encrypt"))
+        if (body.path("encrypt").isTextual())
             return ResponseEntity.badRequest()
                     .body(Collections.singletonMap("code", "ENCRYPTED_EVENT_NOT_CONFIGURED"));
         if (!MessageDigest.isEqual(
@@ -31,14 +31,17 @@ public class EventService {
                         .getBytes(StandardCharsets.UTF_8)))
             return ResponseEntity.status(401)
                     .body(Collections.singletonMap("code", "VERIFICATION_FAILED"));
-        if ("url_verification".equals(body.path("type").asText()))
+        if ("url_verification".equals(body.path("type").asText())
+                && body.path("challenge").isTextual())
             return ResponseEntity.ok(
-                    Collections.singletonMap("challenge", Protocol.required(body, "challenge")));
+                    Collections.singletonMap("challenge", body.path("challenge").textValue()));
         JsonNode event = body.path("event");
         if ("app_ticket".equals(event.path("type").asText())) {
             if (!configuration
-                    .required("DUOWEI_FEISHU_APP_ID")
-                    .equals(event.path("app_id").asText()))
+                            .required("DUOWEI_FEISHU_APP_ID")
+                            .equals(event.path("app_id").asText())
+                    || !event.path("app_ticket").isTextual()
+                    || event.path("app_ticket").asText().trim().isEmpty())
                 return ResponseEntity.badRequest()
                         .body(Collections.singletonMap("code", "APP_TICKET_INVALID"));
             tickets.save(event.path("app_id").asText(), Protocol.required(event, "app_ticket"));

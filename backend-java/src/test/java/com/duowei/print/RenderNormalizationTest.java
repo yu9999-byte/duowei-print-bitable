@@ -32,6 +32,16 @@ class RenderNormalizationTest {
     }
 
     @Test
+    void matchesJavaScriptNumberAndOutputTypeSemantics() {
+        ObjectNode input = request();
+        ((ObjectNode) input.path("output")).put("type", "png").put("pageLimit", 1.0);
+        assertEquals(
+                1, RenderRequestService.normalize(input).path("output").path("pageLimit").asInt());
+        ((ObjectNode) input.path("output")).put("type", " png ");
+        assertThrows(IllegalArgumentException.class, () -> RenderRequestService.normalize(input));
+    }
+
+    @Test
     void rejectsFractionalPageLimitAndCredentials() {
         ObjectNode input = request();
         ((ObjectNode) input.path("output")).put("type", "png").put("pageLimit", 1.5);

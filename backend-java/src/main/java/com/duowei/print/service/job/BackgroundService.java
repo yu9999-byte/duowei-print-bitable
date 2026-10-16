@@ -132,6 +132,7 @@ public class BackgroundService {
                                 : Integer.parseInt(String.valueOf(row.get("attempt")));
                 String status = row.get("status") == null ? "" : String.valueOf(row.get("status"));
                 if (!jobId.equals(taskKey)
+                        || !jobId.equals(row.get("task_key"))
                         || attempt < 0
                         || !Arrays.asList("queued", "processing").contains(status))
                     throw new IllegalStateException("后台任务持久化行无效");

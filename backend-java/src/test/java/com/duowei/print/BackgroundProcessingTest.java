@@ -15,6 +15,32 @@ import org.junit.jupiter.api.Test;
 
 class BackgroundProcessingTest {
     @Test
+    void recoveryRejectsMismatchedPersistedTaskKeyBeforeCallingFeishu() throws Exception {
+        BackgroundJobRepository jobs = mock(BackgroundJobRepository.class);
+        FeishuClient api = mock(FeishuClient.class);
+        RenderService renderer = mock(RenderService.class);
+        AutomationConfiguration config = mock(AutomationConfiguration.class);
+        when(config.workerInterval()).thenReturn(60000L);
+        java.util.Map<String, Object> row = new java.util.HashMap<>();
+        row.put("job_id", "job");
+        row.put("task_key", "different");
+        row.put("status", "queued");
+        row.put("attempt", 0);
+        row.put("submission", "{\"taskKey\":\"job\",\"tenantKey\":\"tenant\"}");
+        when(jobs.recoverable()).thenReturn(java.util.Collections.singletonList(row));
+        BackgroundService service = new BackgroundService(jobs, api, renderer, config);
+        try {
+            Method drain = BackgroundService.class.getDeclaredMethod("drain");
+            drain.setAccessible(true);
+            drain.invoke(service);
+            verifyNoInteractions(api, renderer);
+            verify(jobs, never()).processing(anyString());
+        } finally {
+            service.close();
+        }
+    }
+
+    @Test
     void renderingFailurePersistsFailureAndDoesNotUpload() throws Exception {
         BackgroundJobRepository jobs = mock(BackgroundJobRepository.class);
         FeishuClient api = mock(FeishuClient.class);
@@ -65,7 +91,9 @@ class BackgroundProcessingTest {
         when(api.get(anyString(), eq("token")))
                 .thenReturn(
                         Protocol.JSON.readTree(
-                                "{\"data\":{\"items\":[{\"field_id\":\"a\",\"field_name\":\"attachment\",\"type\":17},{\"field_id\":\"s\",\"field_name\":\"status\",\"type\":1}],\"has_more\":false}}"));
+                                "{\"data\":{\"items\":[{\"field_id\":\"a\",\"field_name\":\"attachment\",\"type\":17}],\"has_more\":true,\"page_token\":\"next/page\"}}"),
+                        Protocol.JSON.readTree(
+                                "{\"data\":{\"items\":[{\"field_id\":\"s\",\"field_name\":\"status\",\"type\":1}],\"has_more\":false}}"));
         when(jobs.status("job")).thenReturn("queued");
         RenderService.Artifact artifact = new RenderService.Artifact();
         artifact.bytes = new byte[] {1, 2};
@@ -88,6 +116,7 @@ class BackgroundProcessingTest {
                             "process", String.class, JsonNode.class, String.class);
             process.setAccessible(true);
             process.invoke(service, "job", body, "token");
+            verify(api).get(contains("page_token=next%2Fpage"), eq("token"));
             verify(jobs).succeed("job", "file-token");
             verify(jobs, never()).fail(anyString(), anyString());
             assertEquals(3, writes.size());

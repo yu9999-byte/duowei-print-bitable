@@ -11,6 +11,27 @@ import org.junit.jupiter.api.Test;
 
 class EventServiceTest {
     @Test
+    void preservesChallengeAndRejectsEmptyTicketWithOriginalErrorCode() throws Exception {
+        AppTicketRepository tickets = mock(AppTicketRepository.class);
+        AutomationConfiguration config = mock(AutomationConfiguration.class);
+        when(config.required("DUOWEI_EVENT_VERIFICATION_TOKEN")).thenReturn("test-token");
+        when(config.required("DUOWEI_FEISHU_APP_ID")).thenReturn("cli_expected");
+        EventService service = new EventService(tickets, config);
+        org.springframework.http.ResponseEntity<?> challenge =
+                service.event(
+                        Protocol.JSON.readTree(
+                                "{\"token\":\"test-token\",\"type\":\"url_verification\",\"challenge\":\" spaced \"}"));
+        assertEquals(" spaced ", ((java.util.Map<?, ?>) challenge.getBody()).get("challenge"));
+        org.springframework.http.ResponseEntity<?> invalid =
+                service.event(
+                        Protocol.JSON.readTree(
+                                "{\"token\":\"test-token\",\"event\":{\"type\":\"app_ticket\",\"app_id\":\"cli_expected\",\"app_ticket\":\" \"}}"));
+        assertEquals(400, invalid.getStatusCodeValue());
+        assertEquals("APP_TICKET_INVALID", ((java.util.Map<?, ?>) invalid.getBody()).get("code"));
+        verifyNoInteractions(tickets);
+    }
+
+    @Test
     void acceptsChallengeWithoutWritingTicket() throws Exception {
         AppTicketRepository tickets = mock(AppTicketRepository.class);
         AutomationConfiguration config = mock(AutomationConfiguration.class);

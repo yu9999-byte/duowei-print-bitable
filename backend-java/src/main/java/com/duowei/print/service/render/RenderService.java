@@ -62,6 +62,8 @@ public class RenderService {
         ChromeDriver driver = new ChromeDriver(options);
         active.put(body.path("artifactKey").asText(), driver);
         try {
+            // Cancellation can arrive while ChromeDriver is still starting, before registration.
+            if (Thread.currentThread().isInterrupted()) throw new IllegalStateException("生成文件已取消");
             driver.manage().timeouts().pageLoadTimeout(Duration.ofSeconds(30));
             driver.manage().timeouts().scriptTimeout(Duration.ofSeconds(90));
             driver.executeCdpCommand("Network.enable", Collections.emptyMap());
