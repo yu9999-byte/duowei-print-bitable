@@ -39,4 +39,27 @@ class RequestPolicyTest {
                 (req, res) -> assertEquals("{\"ok\":true}", req.getReader().readLine()));
         assertNotNull(response.getHeader("X-Duowei-Trace-Id"));
     }
+
+    @Test
+    void allowsConfiguredPreflightAndRejectsUntrustedOrigins() throws Exception {
+        java.util.Map<String, String> values = new java.util.HashMap<>();
+        values.put("DUOWEI_ALLOWED_ORIGINS", "https://plugin.example");
+        values.put("DUOWEI_RENDER_PAGE_URL", "https://service.example/renderer");
+        RequestPolicy policy =
+                new RequestPolicy(new com.duowei.print.config.AutomationConfiguration(values));
+        MockHttpServletRequest request =
+                new MockHttpServletRequest("OPTIONS", "/api/automation/registry");
+        request.addHeader("Origin", "https://plugin.example");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        policy.doFilter(request, response, new MockFilterChain());
+        assertEquals(204, response.getStatus());
+        assertEquals("https://plugin.example", response.getHeader("Access-Control-Allow-Origin"));
+        assertEquals("true", response.getHeader("Access-Control-Allow-Credentials"));
+        MockHttpServletRequest denied =
+                new MockHttpServletRequest("POST", "/api/automation/registry");
+        denied.addHeader("Origin", "https://untrusted.example");
+        MockHttpServletResponse deniedResponse = new MockHttpServletResponse();
+        policy.doFilter(denied, deniedResponse, new MockFilterChain());
+        assertEquals(403, deniedResponse.getStatus());
+    }
 }

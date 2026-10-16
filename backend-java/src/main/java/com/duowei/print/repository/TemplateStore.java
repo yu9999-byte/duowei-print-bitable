@@ -74,6 +74,10 @@ public class TemplateStore {
                     if (!Arrays.asList("ready", "syncing", "error")
                             .contains(t.path("status").asText()))
                         throw new java.sql.SQLException("模板状态无效");
+                    if (!t.path("referencedFieldIds").isArray())
+                        throw new java.sql.SQLException("模板字段引用无效");
+                    for (JsonNode field : t.path("referencedFieldIds"))
+                        if (!field.isTextual()) throw new java.sql.SQLException("模板字段引用无效");
                     Protocol.safeSnapshot(t.path("snapshot"));
                     return (JsonNode) t;
                 },

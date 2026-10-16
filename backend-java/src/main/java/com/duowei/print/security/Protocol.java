@@ -122,6 +122,10 @@ public final class Protocol {
     }
 
     public static void safeSnapshot(JsonNode node) {
+        if (node == null
+                || node.isMissingNode()
+                || node.isNumber() && !Double.isFinite(node.doubleValue()))
+            throw new IllegalArgumentException("自动化模板包含不可序列化数据");
         if (node.isObject())
             node.fields()
                     .forEachRemaining(

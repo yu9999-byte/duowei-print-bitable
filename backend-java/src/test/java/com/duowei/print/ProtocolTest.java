@@ -46,4 +46,21 @@ class ProtocolTest {
                 "[1,0,0.000001,1e-7,1e+21]",
                 Protocol.canonical(Protocol.JSON.readTree("[1.0,-0.0,0.000001,0.0000001,1e21]")));
     }
+
+    @Test
+    void rejectsMissingAndNonFiniteSnapshots() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        Protocol.safeSnapshot(
+                                com.fasterxml.jackson.databind.node.MissingNode.getInstance()));
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        Protocol.safeSnapshot(
+                                com.fasterxml.jackson.databind.node.DoubleNode.valueOf(
+                                        Double.NaN)));
+        assertDoesNotThrow(
+                () -> Protocol.safeSnapshot(com.fasterxml.jackson.databind.node.NullNode.instance));
+    }
 }

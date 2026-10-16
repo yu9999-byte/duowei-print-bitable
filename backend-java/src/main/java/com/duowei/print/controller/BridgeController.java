@@ -1,6 +1,5 @@
 package com.duowei.print.controller;
 
-import com.duowei.print.integration.feishu.FeishuClient;
 import com.duowei.print.security.Protocol;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -11,10 +10,17 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 public class BridgeController {
+    private final com.duowei.print.config.AutomationConfiguration configuration;
+
+    public BridgeController(com.duowei.print.config.AutomationConfiguration configuration) {
+        this.configuration = configuration;
+    }
+
     @GetMapping(value = "/api/automation/bridge", produces = "text/html;charset=UTF-8")
     public ResponseEntity<String> bridge() throws Exception {
         String base =
-                FeishuClient.env("DUOWEI_PUBLIC_AUTOMATION_BASE_URL")
+                configuration
+                        .required("DUOWEI_PUBLIC_AUTOMATION_BASE_URL")
                         .replaceAll("/+$", "")
                         .replace("/openapi/duowei-print", "/api/automation");
         String nonce = UUID.randomUUID().toString();
@@ -27,7 +33,8 @@ public class BridgeController {
                                 "__ALLOWED_ORIGINS__",
                                 Protocol.JSON.writeValueAsString(
                                         Arrays.asList(
-                                                FeishuClient.env("DUOWEI_ALLOWED_ORIGINS")
+                                                configuration
+                                                        .required("DUOWEI_ALLOWED_ORIGINS")
                                                         .split(","))))
                         .replace(
                                 "__AUTHORIZATION_URL__",

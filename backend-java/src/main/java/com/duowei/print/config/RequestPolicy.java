@@ -9,6 +9,17 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 @Component
 public class RequestPolicy extends OncePerRequestFilter {
+    private final AutomationConfiguration configuration;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public RequestPolicy(AutomationConfiguration configuration) {
+        this.configuration = configuration;
+    }
+
+    public RequestPolicy() {
+        this(new AutomationConfiguration());
+    }
+
     @Override
     protected void doFilterInternal(
             HttpServletRequest req, HttpServletResponse res, FilterChain chain)
@@ -17,8 +28,9 @@ public class RequestPolicy extends OncePerRequestFilter {
         res.setHeader("Referrer-Policy", "no-referrer");
         res.setHeader("X-Duowei-Trace-Id", UUID.randomUUID().toString());
         String origin = req.getHeader("Origin");
-        String configured = System.getenv("DUOWEI_ALLOWED_ORIGINS");
-        String renderUrl = System.getenv("DUOWEI_RENDER_PAGE_URL");
+        String configured =
+                origin == null ? null : configuration.required("DUOWEI_ALLOWED_ORIGINS");
+        String renderUrl = origin == null ? null : configuration.required("DUOWEI_RENDER_PAGE_URL");
         boolean sameService =
                 renderUrl != null
                         && origin != null

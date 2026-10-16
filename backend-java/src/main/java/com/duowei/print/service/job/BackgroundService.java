@@ -112,7 +112,11 @@ public class BackgroundService {
         result.put("jobId", key);
         result.put("status", jobs.status(key));
         result.put("reused", existing);
-        return ResponseEntity.status(existing ? 200 : 202).body(result);
+        String trace = UUID.randomUUID().toString();
+        result.put("traceId", trace);
+        return ResponseEntity.status(existing ? 200 : 202)
+                .header("x-duowei-trace-id", trace)
+                .body(result);
     }
 
     private void drain() {
@@ -120,9 +124,20 @@ public class BackgroundService {
             List<Map<String, Object>> recoverable = jobs.recoverable();
             for (Map<String, Object> row : recoverable) {
                 JsonNode body = Protocol.JSON.readTree(row.get("submission").toString());
+                String jobId = String.valueOf(row.get("job_id"));
+                String taskKey = body.path("taskKey").asText();
+                int attempt =
+                        row.get("attempt") == null
+                                ? 0
+                                : Integer.parseInt(String.valueOf(row.get("attempt")));
+                String status = row.get("status") == null ? "" : String.valueOf(row.get("status"));
+                if (!jobId.equals(taskKey)
+                        || attempt < 0
+                        || !Arrays.asList("queued", "processing").contains(status))
+                    throw new IllegalStateException("后台任务持久化行无效");
                 String tenant = body.path("tenantKey").asText();
                 if (expires.getOrDefault(tenant, 0L) > System.currentTimeMillis())
-                    process(row.get("job_id").toString(), body, tokens.get(tenant));
+                    process(jobId, body, tokens.get(tenant));
             }
         } catch (Exception e) {
             System.err.println("后台任务扫描失败：" + e.getClass().getSimpleName());
