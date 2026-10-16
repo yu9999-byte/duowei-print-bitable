@@ -52,9 +52,7 @@ public class OAuthService {
         if (body.size() != 2 || !body.path("template").isObject() || scope.size() != 2)
             throw new IllegalArgumentException("模板同步授权请求无效");
         String origin = req.getHeader("Origin"), plugin = req.getHeader("x-duowei-plugin-origin");
-        Set<String> allowed =
-                new HashSet<>(
-                        Arrays.asList(configuration.required("DUOWEI_ALLOWED_ORIGINS").split(",")));
+        Set<String> allowed = configuration.allowedOrigins();
         boolean bridge = false;
         if (!allowed.contains(origin)) {
             if (java.net
@@ -163,7 +161,8 @@ public class OAuthService {
                                     + FeishuClient.enc(item.path("baseToken").asText())
                                     + "/members/auth?type=bitable&action=edit",
                             access);
-            if (!permission.path("data").path("auth_result").asBoolean())
+            if (!permission.path("data").path("auth_result").isBoolean()
+                    || !permission.path("data").path("auth_result").booleanValue())
                 throw new SecurityException("当前用户没有多维表格编辑权限");
             ObjectNode session = Protocol.JSON.createObjectNode();
             session.put("principalId", Protocol.required(user, "open_id"));
@@ -171,8 +170,11 @@ public class OAuthService {
             session.put("baseToken", item.path("baseToken").asText());
             session.put("tableId", item.path("tableId").asText());
             session.put("canWrite", true);
-            long lifetime = Math.min(7200000, token.path("expires_in").asLong() * 1000 - 30000);
-            if (lifetime < 60000) throw new SecurityException("用户令牌有效期不足");
+            if (!token.path("expires_in").isNumber()) throw new SecurityException("用户令牌有效期无效");
+            double expiresIn = token.path("expires_in").doubleValue();
+            if (!Double.isFinite(expiresIn) || expiresIn <= 0)
+                throw new SecurityException("用户令牌有效期无效");
+            long lifetime = (long) Math.max(60000, Math.min(7200000, expiresIn * 1000 - 30000));
             session.put("expiresAt", System.currentTimeMillis() + lifetime);
             String id = random();
             sessions.put(id, session);

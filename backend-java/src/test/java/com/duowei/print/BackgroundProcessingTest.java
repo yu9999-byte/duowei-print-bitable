@@ -22,11 +22,16 @@ class BackgroundProcessingTest {
         AutomationConfiguration config = mock(AutomationConfiguration.class);
         when(config.workerInterval()).thenReturn(60000L);
         java.util.Map<String, Object> row = new java.util.HashMap<>();
-        row.put("job_id", "job");
+        String taskKey = "duowei-job:v1:" + String.join("", java.util.Collections.nCopies(64, "a"));
+        row.put("job_id", taskKey);
         row.put("task_key", "different");
         row.put("status", "queued");
         row.put("attempt", 0);
-        row.put("submission", "{\"taskKey\":\"job\",\"tenantKey\":\"tenant\"}");
+        row.put(
+                "submission",
+                "{\"version\":1,\"taskKey\":\""
+                        + taskKey
+                        + "\",\"tenantKey\":\"tenant\",\"baseToken\":\"base\",\"tableId\":\"table\",\"recordId\":\"record\",\"outputType\":\"pdf\",\"renderRequest\":{\"artifactKey\":\"duowei:v1:test\",\"output\":{\"type\":\"pdf\"}},\"targets\":{\"attachmentFieldId\":\"a\",\"statusFieldId\":\"s\"}}");
         when(jobs.recoverable()).thenReturn(java.util.Collections.singletonList(row));
         BackgroundService service = new BackgroundService(jobs, api, renderer, config);
         try {

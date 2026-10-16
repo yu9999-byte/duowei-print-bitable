@@ -7,6 +7,27 @@ import org.junit.jupiter.api.Test;
 
 class ProtocolTest {
     @Test
+    void rejectsSignedFractionalAndStringVersions() {
+        byte[] key = new byte[32];
+        com.fasterxml.jackson.databind.node.ObjectNode body = Protocol.JSON.createObjectNode();
+        com.fasterxml.jackson.databind.node.ObjectNode claims = Protocol.JSON.createObjectNode();
+        claims.put("audience", "test");
+        claims.put("issuedAt", System.currentTimeMillis());
+        claims.put("expiresAt", System.currentTimeMillis() + 300000);
+        claims.put("bodyDigest", Protocol.digest(Protocol.canonical(body)));
+        claims.put("version", 1.5);
+        String fractional = Protocol.sign("test-v1", claims, key);
+        assertThrows(
+                SecurityException.class,
+                () -> Protocol.verify(fractional, "test-v1", "test", body, key));
+        claims.put("version", "1");
+        String textual = Protocol.sign("test-v1", claims, key);
+        assertThrows(
+                SecurityException.class,
+                () -> Protocol.verify(textual, "test-v1", "test", body, key));
+    }
+
+    @Test
     void matchesNodeSha256Vector() throws Exception {
         String canonical =
                 Protocol.canonical(

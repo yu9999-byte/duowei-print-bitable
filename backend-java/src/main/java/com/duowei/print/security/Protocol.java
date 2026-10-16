@@ -107,12 +107,13 @@ public final class Protocol {
                 throw new IllegalArgumentException();
             JsonNode claims = JSON.readTree(Base64.getUrlDecoder().decode(parts[1]));
             long now = System.currentTimeMillis();
-            if (claims.path("version").asInt() != 1
+            if (!claims.path("version").isNumber()
+                    || claims.path("version").doubleValue() != 1.0
                     || !audience.equals(claims.path("audience").asText())
                     || !claims.path("expiresAt").isNumber()
                     || !claims.path("issuedAt").isNumber()
-                    || claims.path("expiresAt").asLong() < now
-                    || claims.path("issuedAt").asLong() > now + 30000
+                    || claims.path("expiresAt").doubleValue() < now
+                    || claims.path("issuedAt").doubleValue() > now + 30000
                     || !digest(canonical(body)).equals(claims.path("bodyDigest").asText()))
                 throw new IllegalArgumentException();
             return claims;

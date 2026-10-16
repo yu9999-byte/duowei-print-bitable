@@ -86,8 +86,7 @@ public class RenderService {
             JsonNode result = Protocol.JSON.valueToTree(value);
             if (!result.path("ok").asBoolean()) throw new IllegalStateException("浏览器渲染失败");
             JsonNode a = result.path("value");
-            if (a.path("protocolVersion").asInt() != 1)
-                throw new IllegalStateException("浏览器渲染协议版本不兼容");
+            validateEnvelope(a);
             Artifact artifact = new Artifact();
             artifact.fileName = Protocol.required(a, "fileName");
             artifact.contentType = Protocol.required(a, "contentType");
@@ -125,5 +124,14 @@ public class RenderService {
                 // Cleanup must not replace the original rendering failure.
             }
         }
+    }
+
+    public static void validateEnvelope(JsonNode a) {
+        if (!a.path("protocolVersion").isNumber()
+                || a.path("protocolVersion").doubleValue() != 1.0
+                || !a.path("bytes").isArray()
+                || !a.path("pageCount").isNumber()
+                || a.path("pageCount").doubleValue() != a.path("pageCount").asInt())
+            throw new IllegalStateException("浏览器渲染协议版本不兼容");
     }
 }

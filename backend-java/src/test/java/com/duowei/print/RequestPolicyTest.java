@@ -43,7 +43,7 @@ class RequestPolicyTest {
     @Test
     void allowsConfiguredPreflightAndRejectsUntrustedOrigins() throws Exception {
         java.util.Map<String, String> values = new java.util.HashMap<>();
-        values.put("DUOWEI_ALLOWED_ORIGINS", "https://plugin.example");
+        values.put("DUOWEI_ALLOWED_ORIGINS", " https://plugin.example/ , https://second.example ");
         values.put("DUOWEI_RENDER_PAGE_URL", "https://service.example/renderer");
         RequestPolicy policy =
                 new RequestPolicy(new com.duowei.print.config.AutomationConfiguration(values));

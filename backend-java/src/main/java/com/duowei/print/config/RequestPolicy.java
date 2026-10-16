@@ -28,8 +28,8 @@ public class RequestPolicy extends OncePerRequestFilter {
         res.setHeader("Referrer-Policy", "no-referrer");
         res.setHeader("X-Duowei-Trace-Id", UUID.randomUUID().toString());
         String origin = req.getHeader("Origin");
-        String configured =
-                origin == null ? null : configuration.required("DUOWEI_ALLOWED_ORIGINS");
+        Set<String> configured =
+                origin == null ? Collections.emptySet() : configuration.allowedOrigins();
         String renderUrl = origin == null ? null : configuration.required("DUOWEI_RENDER_PAGE_URL");
         boolean sameService =
                 renderUrl != null
@@ -41,15 +41,11 @@ public class RequestPolicy extends OncePerRequestFilter {
                                 .toString()
                                 .replaceAll("/$", "")
                                 .equals(origin);
-        if (origin != null
-                && !sameService
-                && (configured == null || !Arrays.asList(configured.split(",")).contains(origin))) {
+        if (origin != null && !sameService && !configured.contains(origin)) {
             res.sendError(403);
             return;
         }
-        if (origin != null
-                && configured != null
-                && (sameService || Arrays.asList(configured.split(",")).contains(origin))) {
+        if (origin != null && (sameService || configured.contains(origin))) {
             res.setHeader("Access-Control-Allow-Origin", origin);
             res.setHeader("Access-Control-Allow-Credentials", "true");
             res.setHeader("Vary", "Origin");

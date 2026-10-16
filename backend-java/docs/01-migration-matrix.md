@@ -27,3 +27,22 @@
 2. Java、配置和文档格式化，工具可重复检查。
 3. 真实JDK8执行mvn clean verify成功，JAR启动验证。
 4. 外部依赖测试与真实飞书线上验收分开记录，不以模拟结果代替线上结果。
+
+## 原测试文件映射与剩余缺口
+
+以下按原server目录测试文件建立索引；同主题测试不等于全部断言等价。
+
+| 原测试文件 | Java测试文件 | 仍需逐项核对 |
+| --- | --- | --- |
+| automation-config.test.ts | ConfigurationTest | URL与密钥边界逐例对照 |
+| automation-openapi.controller.test.ts | RegistryContractTest、RenderContractTest、RequestErrorContractTest | 全部路由及错误响应 |
+| automation-bridge-document.test.ts | BridgeContractTest | 已覆盖静态页面契约；真实浏览器消息与恢复同步仍待验 |
+| browser-runtime.test.ts | RenderEnvelopeTest、RenderCacheTest | 启动诊断、独立页面、失败清理及真实浏览器 |
+| registry-row.test.ts | TemplateRowTest、RegistryServiceTest | 已覆盖读取映射；真实数据库往返及敏感快照异常仍待验 |
+| feishu-session-identity.test.ts | OAuthFailureTest仅部分相关 | 身份字段与编辑权限全部分支 |
+| background-job-row.test.ts | BackgroundRepositoryTest、BackgroundProcessingTest | 全部持久化状态与输入校验 |
+| background-job.test.ts | BackgroundValidationTest、BackgroundProcessingTest | 状态机、重复请求及全部失败阶段 |
+| feishu-oauth-session.test.ts | OAuthFailureTest | PKCE/state/session全部原断言 |
+| feishu-background-ports.test.ts | MarketplaceTokenTest、EventServiceTest、BackgroundProcessingTest | 临时令牌到期与上传边界 |
+
+补充Java测试：ProtocolTest、RenderNormalizationTest、RequestPolicyTest、AppTicketRepositoryTest。数据库集成、真实浏览器和真实飞书仍独立验收。

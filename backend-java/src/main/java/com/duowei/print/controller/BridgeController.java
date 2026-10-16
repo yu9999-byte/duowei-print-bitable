@@ -31,11 +31,7 @@ public class BridgeController {
         script =
                 script.replace(
                                 "__ALLOWED_ORIGINS__",
-                                Protocol.JSON.writeValueAsString(
-                                        Arrays.asList(
-                                                configuration
-                                                        .required("DUOWEI_ALLOWED_ORIGINS")
-                                                        .split(","))))
+                                Protocol.JSON.writeValueAsString(configuration.allowedOrigins()))
                         .replace(
                                 "__AUTHORIZATION_URL__",
                                 Protocol.JSON.writeValueAsString(base + "/registry-write-token"))

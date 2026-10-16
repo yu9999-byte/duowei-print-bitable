@@ -28,7 +28,8 @@ class OAuthFailureTest {
         FeishuClient api = mock(FeishuClient.class);
         com.duowei.print.config.AutomationConfiguration config =
                 mock(com.duowei.print.config.AutomationConfiguration.class);
-        when(config.required("DUOWEI_ALLOWED_ORIGINS")).thenReturn("https://plugin.example");
+        when(config.allowedOrigins())
+                .thenReturn(java.util.Collections.singleton("https://plugin.example"));
         when(config.required("DUOWEI_PUBLIC_AUTOMATION_BASE_URL"))
                 .thenReturn("https://service.example/openapi/duowei-print");
         when(config.required("DUOWEI_FEISHU_APP_ID")).thenReturn("cli_test");
@@ -57,12 +58,21 @@ class OAuthFailureTest {
         verifyNoInteractions(api);
     }
 
-    @Test
-    void successfulAuthorizationChecksEditPermissionAndSetsSecureSession() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "true,7200",
+        "false,7200",
+        "\"true\",7200",
+        "true,30",
+        "true,1e20"
+    })
+    void successfulAuthorizationChecksEditPermissionAndSetsSecureSession(
+            String permissionValue, String expiry) throws Exception {
         FeishuClient api = mock(FeishuClient.class);
         com.duowei.print.config.AutomationConfiguration config =
                 mock(com.duowei.print.config.AutomationConfiguration.class);
-        when(config.required("DUOWEI_ALLOWED_ORIGINS")).thenReturn("https://plugin.example");
+        when(config.allowedOrigins())
+                .thenReturn(java.util.Collections.singleton("https://plugin.example"));
         when(config.required("DUOWEI_PUBLIC_AUTOMATION_BASE_URL"))
                 .thenReturn("https://service.example/openapi/duowei-print");
         when(config.required("DUOWEI_FEISHU_APP_ID")).thenReturn("cli_test");
@@ -86,7 +96,9 @@ class OAuthFailureTest {
         when(api.call(contains("oauth/v3/token"), any(), any(), isNull(), any()))
                 .thenReturn(
                         com.duowei.print.security.Protocol.JSON.readTree(
-                                "{\"code\":0,\"access_token\":\"user-token\",\"expires_in\":7200}"));
+                                "{\"code\":0,\"access_token\":\"user-token\",\"expires_in\":"
+                                        + expiry
+                                        + "}"));
         when(api.get(contains("user_info"), eq("user-token")))
                 .thenReturn(
                         com.duowei.print.security.Protocol.JSON.readTree(
@@ -94,11 +106,18 @@ class OAuthFailureTest {
         when(api.get(contains("/members/auth?type=bitable&action=edit"), eq("user-token")))
                 .thenReturn(
                         com.duowei.print.security.Protocol.JSON.readTree(
-                                "{\"data\":{\"auth_result\":true}}"));
+                                "{\"data\":{\"auth_result\":" + permissionValue + "}}"));
         org.springframework.http.ResponseEntity<?> result = oauth.callback(state, "code");
+        if (!"true".equals(permissionValue)) {
+            assertTrue(result.getStatusCodeValue() >= 400);
+            assertNull(result.getHeaders().getFirst("Set-Cookie"));
+            return;
+        }
         assertEquals(200, result.getStatusCodeValue());
         String cookie = result.getHeaders().getFirst("Set-Cookie");
         assertTrue(cookie.contains("HttpOnly; Secure; SameSite=None"));
+        if ("30".equals(expiry)) assertTrue(cookie.contains("Max-Age=60;"));
+        if ("1e20".equals(expiry)) assertTrue(cookie.contains("Max-Age=7200;"));
         assertTrue(result.getBody().toString().contains("duowei-print:oauth-connected"));
         verify(api).get(contains("/members/auth?type=bitable&action=edit"), eq("user-token"));
         assertEquals(400, oauth.callback(state, "code").getStatusCodeValue());

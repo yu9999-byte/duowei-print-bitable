@@ -26,7 +26,13 @@ public class FeishuClient {
         JsonNode result =
                 http.exchange(url, method, new HttpEntity<>(body, headers), JsonNode.class)
                         .getBody();
-        if (result == null || result.has("code") && result.path("code").asInt() != 0)
+        if (result == null
+                || !result.isObject()
+                || result.has("error")
+                || result.has("code")
+                        && (!result.path("code").isNumber()
+                                || result.path("code").doubleValue() != 0.0)
+                || !result.has("code") && !url.equals("https://accounts.feishu.cn/oauth/v3/token"))
             throw new IllegalStateException("飞书接口请求失败");
         return result;
     }
