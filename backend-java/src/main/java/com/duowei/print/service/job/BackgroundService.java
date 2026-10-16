@@ -50,13 +50,41 @@ public class BackgroundService {
 
     public ResponseEntity<?> submit(String signature, String token, ObjectNode body) {
         if (token.trim().length() < 20) throw new IllegalArgumentException("后台任务缺少临时租户凭证");
+        body = normalizeSubmission(body);
+        String key = body.path("taskKey").asText();
+        JsonNode claims =
+                Protocol.verify(
+                        signature,
+                        "duowei-background-job-v1",
+                        "duowei-background-job",
+                        body,
+                        configuration.signingSecret("DUOWEI_BACKGROUND_JOB_SIGNING_SECRET_HEX"));
+        if (!key.equals(claims.path("taskKey").asText())) throw new SecurityException("任务键签名不一致");
+        boolean existing = jobs.exists(key);
+        jobs.createOrRetry(key, body.toString());
+        String tenant = body.path("tenantKey").asText();
+        tokens.put(tenant, token.trim());
+        expires.put(tenant, System.currentTimeMillis() + 5400000);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("jobId", key);
+        result.put("status", jobs.status(key));
+        result.put("reused", existing);
+        String trace = UUID.randomUUID().toString();
+        result.put("traceId", trace);
+        return ResponseEntity.status(existing ? 200 : 202)
+                .header("x-duowei-trace-id", trace)
+                .body(result);
+    }
+
+    public static ObjectNode normalizeSubmission(ObjectNode body) {
         body = body.deepCopy();
         String key = Protocol.required(body, "taskKey");
         body.put("taskKey", key);
-        if (!key.matches("duowei-job:v1:[0-9a-f]{64}") || body.path("version").asInt() != 1)
+        if (!key.matches("duowei-job:v1:[0-9a-f]{64}")
+                || !body.path("version").isNumber()
+                || body.path("version").doubleValue() != 1.0)
             throw new IllegalArgumentException("后台任务键或版本无效");
-        for (String f :
-                Arrays.asList("tenantKey", "baseToken", "tableId", "recordId", "outputType"))
+        for (String f : Arrays.asList("tenantKey", "baseToken", "tableId", "recordId"))
             body.put(f, Protocol.required(body, f));
         if (!Arrays.asList("pdf", "png").contains(body.path("outputType").asText())
                 || !body.path("outputType")
@@ -68,7 +96,10 @@ public class BackgroundService {
         JsonNode targets = body.path("targets");
         String attachment = Protocol.required(targets, "attachmentFieldId"),
                 status = Protocol.required(targets, "statusFieldId"),
-                error = targets.path("errorFieldId").asText("").trim();
+                error =
+                        targets.path("errorFieldId").isTextual()
+                                ? targets.path("errorFieldId").asText().trim()
+                                : "";
         if (attachment.equals(status)
                 || !error.isEmpty() && (error.equals(attachment) || error.equals(status)))
             throw new IllegalArgumentException("后台任务字段不能重复");
@@ -95,35 +126,16 @@ public class BackgroundService {
         while (names.hasNext()) {
             if (!allowed.contains(names.next())) throw new IllegalArgumentException("任务包含不支持的属性");
         }
-        JsonNode claims =
-                Protocol.verify(
-                        signature,
-                        "duowei-background-job-v1",
-                        "duowei-background-job",
-                        body,
-                        configuration.signingSecret("DUOWEI_BACKGROUND_JOB_SIGNING_SECRET_HEX"));
-        if (!key.equals(claims.path("taskKey").asText())) throw new SecurityException("任务键签名不一致");
-        boolean existing = jobs.exists(key);
-        jobs.createOrRetry(key, body.toString());
-        String tenant = body.path("tenantKey").asText();
-        tokens.put(tenant, token.trim());
-        expires.put(tenant, System.currentTimeMillis() + 5400000);
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("jobId", key);
-        result.put("status", jobs.status(key));
-        result.put("reused", existing);
-        String trace = UUID.randomUUID().toString();
-        result.put("traceId", trace);
-        return ResponseEntity.status(existing ? 200 : 202)
-                .header("x-duowei-trace-id", trace)
-                .body(result);
+        return body;
     }
 
     private void drain() {
         try {
             List<Map<String, Object>> recoverable = jobs.recoverable();
             for (Map<String, Object> row : recoverable) {
-                JsonNode body = Protocol.JSON.readTree(row.get("submission").toString());
+                JsonNode persisted = Protocol.JSON.readTree(row.get("submission").toString());
+                if (!persisted.isObject()) throw new IllegalStateException("后台任务持久化内容无效");
+                JsonNode body = normalizeSubmission((ObjectNode) persisted);
                 String jobId = String.valueOf(row.get("job_id"));
                 String taskKey = body.path("taskKey").asText();
                 int attempt =

@@ -9,7 +9,7 @@
 - JDK：Zulu OpenJDK 1.8.0_452。
 - Maven：3.9.9。
 - 执行：`mvn spotless:apply clean verify`，已成功。
-- 测试：最新完整 clean verify 共42项通过，零失败、零错误，覆盖配置、签名、接口边界、渲染缓存、后台输入/失败/成功回写、重试恢复查询、OAuth失败回调、PKCE及state一次性消费、事件鉴权和请求限制。
+- 测试：最新完整 clean verify 共43项通过，零失败、零错误，覆盖配置、签名、接口边界、渲染缓存、后台输入/失败/成功回写、重试恢复查询、OAuth失败回调、PKCE及state一次性消费、事件鉴权和请求限制。
 - 产物：`target/print-backend-1.0.0.jar`。
 - 启动：Java 8启动Spring Boot 2.7.18，端口18081。
 - HTTP：`GET /openapi/duowei-print/health`成功；`GET /api/automation/bridge`为200。
@@ -34,3 +34,5 @@
 恢复行一致性：恢复查询补回task_key，并与job_id和submission.taskKey同时校验，防止读取不一致持久化任务。修改后真实JDK 8完整构建41项通过，零失败。
 
 恢复校验回归：新增持久化task_key与job_id不一致时拒绝处理的测试。最新真实JDK 8完整构建42项通过。
+
+2026-10-17：提交与恢复统一使用normalizeSubmission；版本严格要求数值1，输出类型不接受空格，非字符串errorFieldId按原实现忽略。新增规范化不修改输入及严格类型回归，真实JDK 8完整构建43项通过。

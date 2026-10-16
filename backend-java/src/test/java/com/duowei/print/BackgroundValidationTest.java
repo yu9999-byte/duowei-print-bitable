@@ -15,6 +15,29 @@ import org.junit.jupiter.api.Test;
 
 class BackgroundValidationTest {
     @Test
+    void sharedNormalizationUsesStrictVersionAndOutputTypes() throws Exception {
+        ObjectNode body =
+                (ObjectNode)
+                        Protocol.JSON.readTree(
+                                "{\"version\":1,\"taskKey\":\"duowei-job:v1:"
+                                        + String.join("", Collections.nCopies(64, "a"))
+                                        + "\",\"tenantKey\":\" tenant \",\"baseToken\":\"base\",\"tableId\":\"table\",\"recordId\":\"record\",\"outputType\":\"pdf\",\"renderRequest\":{\"artifactKey\":\"duowei:v1:test\",\"output\":{\"type\":\"pdf\"}},\"targets\":{\"attachmentFieldId\":\"a\",\"statusFieldId\":\"s\",\"errorFieldId\":42}}");
+        ObjectNode normalized = BackgroundService.normalizeSubmission(body);
+        assertEquals("tenant", normalized.path("tenantKey").asText());
+        assertFalse(normalized.path("targets").has("errorFieldId"));
+        assertEquals(" tenant ", body.path("tenantKey").asText());
+        body.put("version", "1");
+        assertThrows(
+                IllegalArgumentException.class, () -> BackgroundService.normalizeSubmission(body));
+        body.put("version", 1.5);
+        assertThrows(
+                IllegalArgumentException.class, () -> BackgroundService.normalizeSubmission(body));
+        body.put("version", 1).put("outputType", " pdf ");
+        assertThrows(
+                IllegalArgumentException.class, () -> BackgroundService.normalizeSubmission(body));
+    }
+
+    @Test
     void rejectsMissingCredentialsBeforePersistence() {
         BackgroundJobRepository jobs = mock(BackgroundJobRepository.class);
         AutomationConfiguration config = mock(AutomationConfiguration.class);
