@@ -1,0 +1,99 @@
+# 验证与修复历史
+
+以下按实施顺序保存证据；当前结果和未完成项以[验证记录](02-verification.md)为准。历史测试数量代表各次构建当时的结果。
+
+2026-10-17桥接契约：BridgeContractTest验证origin规范化、opener限制、同源API路径、恢复存储、nonce与CSP及no-store，拒绝带路径origin。修复桥接白名单直接按逗号拆分未去空格的问题，改用已验证的allowedOrigins配置。静态页面契约测试不替代浏览器交互验收。
+
+2026-10-17模板行映射：TemplateRowTest验证tenant/base/table/template/revision、中文名称、快照和字段引用读取保持一致，拒绝非字符串字段引用。使用模拟JDBC；首次测试的Mockito可变参数匹配已修正。真实JDK 8完整构建49项通过，零失败。
+
+2026-10-17 OAuth权限对齐：auth_result仅接受布尔true，拒绝false与字符串true，不签发会话Cookie；expires_in必须为数值。参数化回归覆盖权限三种响应，真实JDK 8完整构建51项通过。此项为模拟飞书接口测试。
+
+2026-10-17飞书响应校验：通用OpenAPI必须返回对象及数值code=0；拒绝缺失code、数组、字符串code、小数code和非零code。OAuth Token端点允许标准无code对象响应。MockRestServiceServer覆盖5种异常响应，真实JDK 8完整构建56项通过；未调用真实飞书。
+
+飞书响应正向回归：补充数值code=0的OpenAPI响应及无code的标准OAuth Token响应通过测试。最新真实JDK 8完整构建58项通过，零失败。
+
+OAuth错误响应回归：HTTP 200但包含error字段的Token响应也会拒绝。FeishuResponseTest共8项通过，最新真实JDK 8完整构建59项通过，零失败。
+
+OAuth有效期对照：按原实现将正数expires_in计算的会话时长限制在60秒至2小时；使用浮点计算后限幅，避免整数乘1000溢出，拒绝非有限或非正有效期。修改后真实JDK 8完整构建59项通过。
+
+OAuth有效期边界回归：补充expires_in=30及1e20的模拟授权，确认短有效期按原协议限为60秒，极大有效期不会整数溢出。最新真实JDK 8完整构建61项通过，零失败。
+
+OAuth来源配置一致性：授权入口改用configuration.allowedOrigins()，与桥接及请求策略共用规范化白名单，避免配置中的空格或末尾斜杠导致误拒绝。修改后真实JDK 8完整构建61项通过。
+
+请求策略来源一致性：CORS过滤器也改用allowedOrigins()，与OAuth及桥接统一；预检测试使用含空格、多个来源与末尾斜杠的配置，验证合法来源通过且陌生来源拒绝。真实JDK 8完整构建61项通过。
+
+临时租户凭证清理：过期凭证在读取时从内存移除，服务关闭清空凭证与时间记录；凭证与过期时间同步更新，避免读取不一致。TenantCredentialTest覆盖过期移除、有效凭证读取及关闭清理。真实JDK 8完整构建62项通过，零失败。
+
+后台失败保留回归：模拟浏览器渲染失败后，飞书失败状态回写也再次失败，仍验证数据库保存原始且脱敏后的渲染错误，不被次级回写错误覆盖，且不上传文件。真实JDK 8完整构建62项通过。
+
+字段元数据与失败链路：拒绝缺失items、非数组items及小数附件字段类型；忽略缺失稳定ID或名称的字段，has_more仅接受布尔值。新增3项异常元数据测试，失败发生在渲染和上传之前。失败状态回写再次失败时仍保存原始脱敏错误。真实JDK 8完整构建65项通过，零失败。
+
+上传大小边界回归：后台成功链路参数化覆盖小文件、恰好20MiB及20MiB加1字节；前两者上传成功，超限时保存失败且不调用上传接口。最新真实JDK 8完整构建67项通过，零失败。
+
+上传表单契约：后台测试捕获multipart参数，验证POST方法、文件名称、bitable_file归属类型、baseToken节点、字节大小及文件字节保持一致。真实JDK 8完整构建67项通过；此为模拟上传契约，未调用真实飞书。
+
+上传MIME兼容修复：文件part显式携带渲染产物contentType，与原Blob类型一致；模拟上传测试断言application/pdf、文件名与原始字节。真实JDK 8完整构建67项通过，零失败。
+
+渲染超时回归：RenderTimeoutTest模拟阻塞渲染，验证超时触发线程中断及renderer.cancel、失败缓存移除、同产物键可重新生成。默认生产超时仍为90秒；测试使用500毫秒。真实JDK 8完整构建68项通过，零失败。真实浏览器取消和进程清理仍待验收。
+
+渲染关闭回归：服务关闭时取消活动Future、调用renderer.cancel、中断模拟渲染并释放等待请求；RenderTimeoutTest共2项通过。最新真实JDK 8完整构建69项通过，零失败。此项未启动真实Chromium。
+
+关闭后请求回归：执行器拒绝新任务时清除对应缓存并取消Future，返回服务已关闭，避免后续相同请求等待无法执行的任务。重复请求回归通过；真实JDK 8完整构建70项通过，零失败。
+
+渲染关闭并发修复：任务登记及提交与关闭操作共用生命周期锁，关闭标志阻止新任务插入，避免关闭扫描与新请求竞争留下未取消任务。修改后真实JDK 8完整构建70项通过。真实浏览器进程清理仍待验收。
+
+跨语言HMAC证据：本机Node.js crypto使用32字节固定测试密钥生成完整test-v1签名，Java以不同属性插入顺序生成的canonical payload、base64url及HMAC令牌逐字一致。ProtocolTest新增固定向量通过，真实JDK 8完整构建71项通过。该向量不代表全部数值边界已证明兼容。
+
+来源配置边界：拒绝仅包含逗号的来源配置，防止Java split丢弃空元素后空集合通过校验。新增ConfigurationTest回归，真实JDK 8完整构建72项通过，零失败。
+
+OAuth路由对齐：缺少state时两组start/callback路由均返回安全失败HTML；参数去除两端空格，失效start不再仅返回纯文本。新增MockMvc覆盖四个入口，首次回归发现并修复start页面协议遗漏。真实JDK 8完整构建73项通过，零失败。
+
+OAuth取消回调：error参数优先于code，state/code去除两端空格；新增路由回归。最新JDK 8完整构建74项通过，零失败、零错误。
+
+OAuth会话复用核对：成功授权后使用安全Cookie再次申请写签名，验证飞书tenant_key与principalId写入签名、签名可验且摘要绑定授权body、原draft不被修改；更换tableId重新要求连接，恶意来源即使持有Cookie也拒绝。三组成功授权参数均执行上述断言。JDK 8完整构建仍为74项通过，零失败、零错误。
+
+妙搭托管身份边界：原modules/automation/feishu-session-identity依赖托管平台验证的userId、数值tenantId与appId。独立Java服务不能自行信任客户端传入这些字段，使用飞书OAuth user_info身份、编辑权限及服务配置的client_id替代。此为运行环境适配，尚未证明妙搭托管会话与Java服务直接互通。
+
+后台恢复行校验：不再把缺失attempt默认为0，与原持久化行校验一致。参数化覆盖标识不一致、缺失/负数/小数attempt与非法status，确认拒绝时不调用飞书、渲染或processing。JDK 8完整构建78项通过，零失败、零错误。
+
+浏览器启动诊断对齐：ChromeDriver构造失败转换为安全错误，优先保留缺失共享库、GLIBC版本和进程退出诊断，包含系统与架构并限制长度，截断前隐藏Bearer凭据。BrowserLaunchTest验证原测试中的GLIBC和exitCode诊断案例；JDK 8完整构建79项通过，零失败、零错误。此测试未启动真实浏览器；Java使用系统Chrome/ChromeDriver，原serverless Chromium解包和Linux兼容库准备仍属于运行环境差异。
+
+同源OAuth桥接回跳：新增service.example来源与受信plugin-origin组合的完整模拟授权，验证303返回固定桥接地址、安全Cookie、会话复用签名及作用域隔离；不受信来源持有Cookie仍拒绝。JDK 8完整构建80项通过，零失败、零错误。此为服务层模拟测试，真实浏览器窗口消息及真实飞书授权尚待验收。
+
+授权draft规范化修复：按原parseDraft行为，在签发前对baseToken和tableId去除两端空格并使用深拷贝保存规范化body，避免签名body与身份作用域不一致。成功授权各参数分支验证输入保持原样、返回body规范化且签名可验。JDK 8完整构建80项通过，零失败、零错误。
+
+OAuth来源规范化：与原trustedOrigin一致，对Origin及x-duowei-plugin-origin去除首尾空格，缺失值视为空来源并拒绝。直接授权与同源桥接成功测试均使用含空格来源，并继续验证恶意来源拒绝。JDK 8完整构建80项通过，零失败、零错误。
+
+配置原测试核对：补充空服务凭据、空签名密钥、空事件token、空App Secret、非法App ID、非HTTPS渲染地址、非法公网根路径、异源回调，以及Worker小数和上下限测试；验证旧OpenAPI回调路径仍支持。真实JDK 8完整构建94项通过，零失败、零错误。
+
+集成环境复查：在codex-tmp、Selenium缓存和Playwright缓存未找到ChromeDriver/PostgreSQL工具；web-access检查发现Edge调试端口，但连接代理超时。未进行下载、数据库操作或真实浏览器验收。
+
+后台提交契约核对：新增有效HMAC签名提交测试，覆盖新任务202与重复任务200、reused标记、jobId/status与trace header一致；taskKey与已签名claims不一致时拒绝且不访问Repository。JDK 8完整构建96项通过，零失败、零错误。数据库创建与重试仍使用模拟Repository，真实SQL执行尚待验收。
+
+模板业务分层补齐：RegistryService在调用Repository前校验模板id/revision/name、快照安全及字段引用数组，防止业务有效性仅依赖数据库适配器。有效签名但字段引用含数字的请求在Service拒绝，验证不调用Repository；写入成功测试改用完整模板。JDK 8完整构建96项通过，零失败、零错误。
+
+渲染HTTP契约核对：两组render路由超时均返回504、RENDER_FAILED及trace header；成功返回保留原始字节、PDF类型、产物键、页数和中文文件名百分号编码。JDK 8完整构建99项通过，零失败、零错误。此为模拟渲染服务的HTTP协议验证，未生成真实PDF。飞书客户端已配置10秒连接和30秒读取超时；原网关90秒渲染超时与Java缓存默认值一致。
+
+模板注册错误协议修复：缺少签名返回AUTH_REQUIRED，非法模板返回TEMPLATE_INVALID，与原HTTP处理器一致；异常消息统一脱敏，并将traceId同时写入响应体和header。新增MockMvc回归验证缺签名不调用Service及错误凭据不泄露。JDK 8完整构建101项通过，零失败、零错误。
+
+后台任务错误协议修复：缺失或过短租户凭证返回TENANT_TOKEN_REQUIRED且不调用Service；非法任务返回JOB_INVALID，签名失败返回AUTH_INVALID，响应消息脱敏并提供trace header。新增路由回归。JDK 8完整构建103项通过，零失败、零错误。
+
+后台签名失败路由证据：模拟Service拒绝无效签名，确认HTTP401、AUTH_INVALID、Bearer凭据脱敏，响应体traceId与header逐字一致。JDK 8完整构建104项通过，零失败、零错误。
+
+接口清单：逐项核对原两个Controller的17个方法路径组合，新增04-api-contracts.md。发现独立Java渲染页缺少原托管鉴权边界，RequestPolicy补服务Bearer校验；RendererAccessTest覆盖缺失、错误和正确凭据。JDK 8完整构建107项通过，零失败、零错误。真实浏览器带Authorization导航仍待验收。
+
+签名头兼容修复：原模板、渲染及后台任务处理器均trim签名请求头，Java统一在Protocol.verify验签前去除首尾空格；回归验证带空格有效签名通过，null仍转换为安全签名错误。JDK 8完整构建107项通过，零失败、零错误。
+
+跨语言数值签名修复：移除依赖Java8 Double.toString的十进制选择，按最短往返、最近值和偶数舍入选择decimal，再应用JavaScript指数阈值。固定回归覆盖1e23、大整数和最小次正规数；本机Node生成1000次确定性位模式的有限double向量，Java逐项与JSON.stringify对比通过。向量保存在src/test/resources/node-number-vectors.json。JDK 8完整构建109项通过，零失败、零错误；随机样本仍不等于全部IEEE754值的穷举证明。
+
+对象canonical证据：新增可重复生成的Node协议向量脚本，覆盖数字形式键的字典排序、UTF16补充字符排序、中文转义及嵌套数值，Java canonical和SHA256逐字对比通过；数值向量也由同一脚本生成。JDK8完整构建110项通过，零失败、零错误。
+
+新增显式测试库开关的PostgresIntegrationTest。JDK8完整构建成功；111项中110项通过，数据库测试1项因缺少测试库配置跳过。没有真实数据库验收结论。
+
+事件输入协议修复：原处理器拒绝数组/null/原始值事件，且verification token必须字符串；Java补对应校验，避免数值token隐式转字符串后通过。4组回归均拒绝且不持久化ticket。JDK8构建成功，115项中114通过、1项PostgreSQL测试跳过，零失败、零错误。
+
+飞书URL重复编码修复：新增真实RestTemplate请求构建层测试，首次失败证明已编码路径和page_token中的%2F被变成%252F；改用exchange(URI,...)避免String模板再次编码。测试覆盖斜杠、加号、中文、等号和Bearer头。JDK8完整构建成功，116项中115通过、1项数据库集成测试跳过，零失败、零错误。请求拦截测试不替代真实飞书验收。
+
+浏览器生命周期模拟验证：提取可替换的ChromeDriver创建入口，BrowserLifecycleTest验证导航前设置30秒页面超时、90秒脚本超时及Authorization；导航失败后quit，即使quit再次失败仍保留原导航异常，close不会重复关闭已移除driver。JDK8完整构建成功，117项中116通过、1项数据库测试跳过。此测试未启动真实Chrome，不证明操作系统进程清理成功。
+
+浏览器启动/关闭竞态修复：RenderService关闭标志与driver登记共用生命周期锁；关闭后拒绝新渲染，启动期间发生关闭时，晚返回的driver直接进入finally退出，不导航、不设置网络。模拟启动回调触发关闭验证通过。JDK8构建成功，118项中117通过、1项数据库测试跳过。真实Chrome进程验收仍未完成。

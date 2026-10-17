@@ -51,7 +51,11 @@ public class OAuthService {
         String b = Protocol.required(scope, "baseToken"), t = Protocol.required(scope, "tableId");
         if (body.size() != 2 || !body.path("template").isObject() || scope.size() != 2)
             throw new IllegalArgumentException("模板同步授权请求无效");
+        body = body.deepCopy();
+        ((ObjectNode) body.path("scope")).put("baseToken", b).put("tableId", t);
         String origin = req.getHeader("Origin"), plugin = req.getHeader("x-duowei-plugin-origin");
+        origin = origin == null ? "" : origin.trim();
+        plugin = plugin == null ? "" : plugin.trim();
         Set<String> allowed = configuration.allowedOrigins();
         boolean bridge = false;
         if (!allowed.contains(origin)) {

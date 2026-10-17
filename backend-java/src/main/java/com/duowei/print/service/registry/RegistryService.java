@@ -51,6 +51,13 @@ public class RegistryService {
         for (String key : Arrays.asList("tenantKey", "baseToken", "tableId"))
             if (!Protocol.required(body.path("scope"), key).equals(claims.path(key).asText()))
                 throw new SecurityException("作用域不一致");
+        JsonNode template = body.path("template");
+        for (String key : Arrays.asList("id", "revision", "name")) Protocol.required(template, key);
+        Protocol.safeSnapshot(template.path("snapshot"));
+        if (!template.path("referencedFieldIds").isArray())
+            throw new IllegalArgumentException("模板字段引用必须是数组");
+        for (JsonNode field : template.path("referencedFieldIds"))
+            if (!field.isTextual()) throw new IllegalArgumentException("模板字段引用无效");
         store.upsert(body);
         return ResponseEntity.noContent().build();
     }

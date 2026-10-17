@@ -7,7 +7,7 @@
 - JDK：Zulu OpenJDK 1.8.0_452。
 - Maven：3.9.9。
 - 从仓库根目录执行：`mvn -f backend-java/pom.xml -B spotless:apply clean verify`。
-- 最新结果：74项测试通过，零失败、零错误；Java格式检查、编译和打包成功。
+- 最新结果：共118项，117项通过，1项PostgreSQL集成测试因未配置测试库跳过，零失败、零错误；Java格式检查、编译和打包成功。
 - 产物：`backend-java/target/print-backend-1.0.0.jar`。
 - `git diff --check`通过。
 
@@ -43,54 +43,8 @@
 
 原后台保留。不部署、不切换线上后台、不自动提交或推送。工作区若出现自动同步提交，不代表本任务执行了Git提交。
 
-2026-10-17桥接契约：BridgeContractTest验证origin规范化、opener限制、同源API路径、恢复存储、nonce与CSP及no-store，拒绝带路径origin。修复桥接白名单直接按逗号拆分未去空格的问题，改用已验证的allowedOrigins配置。静态页面契约测试不替代浏览器交互验收。
+## 5. 历史记录
 
-2026-10-17模板行映射：TemplateRowTest验证tenant/base/table/template/revision、中文名称、快照和字段引用读取保持一致，拒绝非字符串字段引用。使用模拟JDBC；首次测试的Mockito可变参数匹配已修正。真实JDK 8完整构建49项通过，零失败。
+逐次修复、测试与构建证据见[验证与修复历史](03-verification-history.md)。
 
-2026-10-17 OAuth权限对齐：auth_result仅接受布尔true，拒绝false与字符串true，不签发会话Cookie；expires_in必须为数值。参数化回归覆盖权限三种响应，真实JDK 8完整构建51项通过。此项为模拟飞书接口测试。
-
-2026-10-17飞书响应校验：通用OpenAPI必须返回对象及数值code=0；拒绝缺失code、数组、字符串code、小数code和非零code。OAuth Token端点允许标准无code对象响应。MockRestServiceServer覆盖5种异常响应，真实JDK 8完整构建56项通过；未调用真实飞书。
-
-飞书响应正向回归：补充数值code=0的OpenAPI响应及无code的标准OAuth Token响应通过测试。最新真实JDK 8完整构建58项通过，零失败。
-
-OAuth错误响应回归：HTTP 200但包含error字段的Token响应也会拒绝。FeishuResponseTest共8项通过，最新真实JDK 8完整构建59项通过，零失败。
-
-OAuth有效期对照：按原实现将正数expires_in计算的会话时长限制在60秒至2小时；使用浮点计算后限幅，避免整数乘1000溢出，拒绝非有限或非正有效期。修改后真实JDK 8完整构建59项通过。
-
-OAuth有效期边界回归：补充expires_in=30及1e20的模拟授权，确认短有效期按原协议限为60秒，极大有效期不会整数溢出。最新真实JDK 8完整构建61项通过，零失败。
-
-OAuth来源配置一致性：授权入口改用configuration.allowedOrigins()，与桥接及请求策略共用规范化白名单，避免配置中的空格或末尾斜杠导致误拒绝。修改后真实JDK 8完整构建61项通过。
-
-请求策略来源一致性：CORS过滤器也改用allowedOrigins()，与OAuth及桥接统一；预检测试使用含空格、多个来源与末尾斜杠的配置，验证合法来源通过且陌生来源拒绝。真实JDK 8完整构建61项通过。
-
-临时租户凭证清理：过期凭证在读取时从内存移除，服务关闭清空凭证与时间记录；凭证与过期时间同步更新，避免读取不一致。TenantCredentialTest覆盖过期移除、有效凭证读取及关闭清理。真实JDK 8完整构建62项通过，零失败。
-
-后台失败保留回归：模拟浏览器渲染失败后，飞书失败状态回写也再次失败，仍验证数据库保存原始且脱敏后的渲染错误，不被次级回写错误覆盖，且不上传文件。真实JDK 8完整构建62项通过。
-
-字段元数据与失败链路：拒绝缺失items、非数组items及小数附件字段类型；忽略缺失稳定ID或名称的字段，has_more仅接受布尔值。新增3项异常元数据测试，失败发生在渲染和上传之前。失败状态回写再次失败时仍保存原始脱敏错误。真实JDK 8完整构建65项通过，零失败。
-
-上传大小边界回归：后台成功链路参数化覆盖小文件、恰好20MiB及20MiB加1字节；前两者上传成功，超限时保存失败且不调用上传接口。最新真实JDK 8完整构建67项通过，零失败。
-
-上传表单契约：后台测试捕获multipart参数，验证POST方法、文件名称、bitable_file归属类型、baseToken节点、字节大小及文件字节保持一致。真实JDK 8完整构建67项通过；此为模拟上传契约，未调用真实飞书。
-
-上传MIME兼容修复：文件part显式携带渲染产物contentType，与原Blob类型一致；模拟上传测试断言application/pdf、文件名与原始字节。真实JDK 8完整构建67项通过，零失败。
-
-渲染超时回归：RenderTimeoutTest模拟阻塞渲染，验证超时触发线程中断及renderer.cancel、失败缓存移除、同产物键可重新生成。默认生产超时仍为90秒；测试使用500毫秒。真实JDK 8完整构建68项通过，零失败。真实浏览器取消和进程清理仍待验收。
-
-渲染关闭回归：服务关闭时取消活动Future、调用renderer.cancel、中断模拟渲染并释放等待请求；RenderTimeoutTest共2项通过。最新真实JDK 8完整构建69项通过，零失败。此项未启动真实Chromium。
-
-关闭后请求回归：执行器拒绝新任务时清除对应缓存并取消Future，返回服务已关闭，避免后续相同请求等待无法执行的任务。重复请求回归通过；真实JDK 8完整构建70项通过，零失败。
-
-渲染关闭并发修复：任务登记及提交与关闭操作共用生命周期锁，关闭标志阻止新任务插入，避免关闭扫描与新请求竞争留下未取消任务。修改后真实JDK 8完整构建70项通过。真实浏览器进程清理仍待验收。
-
-跨语言HMAC证据：本机Node.js crypto使用32字节固定测试密钥生成完整test-v1签名，Java以不同属性插入顺序生成的canonical payload、base64url及HMAC令牌逐字一致。ProtocolTest新增固定向量通过，真实JDK 8完整构建71项通过。该向量不代表全部数值边界已证明兼容。
-
-来源配置边界：拒绝仅包含逗号的来源配置，防止Java split丢弃空元素后空集合通过校验。新增ConfigurationTest回归，真实JDK 8完整构建72项通过，零失败。
-
-OAuth路由对齐：缺少state时两组start/callback路由均返回安全失败HTML；参数去除两端空格，失效start不再仅返回纯文本。新增MockMvc覆盖四个入口，首次回归发现并修复start页面协议遗漏。真实JDK 8完整构建73项通过，零失败。
-
-OAuth取消回调：error参数优先于code，state/code去除两端空格；新增路由回归。最新JDK 8完整构建74项通过，零失败、零错误。
-
-OAuth会话复用核对：成功授权后使用安全Cookie再次申请写签名，验证飞书tenant_key与principalId写入签名、签名可验且摘要绑定授权body、原draft不被修改；更换tableId重新要求连接，恶意来源即使持有Cookie也拒绝。三组成功授权参数均执行上述断言。JDK 8完整构建仍为74项通过，零失败、零错误。
-
-妙搭托管身份边界：原modules/automation/feishu-session-identity依赖托管平台验证的userId、数值tenantId与appId。独立Java服务不能自行信任客户端传入这些字段，使用飞书OAuth user_info身份、编辑权限及服务配置的client_id替代。此为运行环境适配，尚未证明妙搭托管会话与Java服务直接互通。
+PostgreSQL集成测试：PostgresIntegrationTest仅在DUOWEI_TEST_POSTGRES_URL显式配置时执行，账号变量为DUOWEI_TEST_POSTGRES_USERNAME与DUOWEI_TEST_POSTGRES_PASSWORD。连接必须指向授权的专用测试库，需CREATE SCHEMA权限。测试创建随机schema、执行两份真实迁移、验证模板upsert/read、任务失败重试/成功幂等和ticket覆盖，finally删除该临时schema；不读取应用数据库变量。当前未执行，不能计为数据库验证通过。

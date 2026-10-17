@@ -1,0 +1,52 @@
+[
+  {
+    "input": {
+      "2": "two",
+      "10": "ten",
+      "01": "leading",
+      "a": [
+        null,
+        true,
+        false
+      ]
+    },
+    "expected": "{\"01\":\"leading\",\"10\":\"ten\",\"2\":\"two\",\"a\":[null,true,false]}",
+    "digest": "1vIB7wAkS9XYgNicQXDrpgumPJuhuxFvylaZm7IiM7s"
+  },
+  {
+    "input": {
+      "": "private",
+      "😀": "emoji",
+      "中文": "line\nquote\"slash\\"
+    },
+    "expected": "{\"中文\":\"line\\nquote\\\"slash\\\\\",\"😀\":\"emoji\",\"\":\"private\"}",
+    "digest": "F6ClbZW0AimJXJc8prLsqDgnESxldYQac-n86JoXWwY"
+  },
+  {
+    "input": {
+      "nested": {
+        "z": 1e+23,
+        "a": 0,
+        "min": 5e-324
+      },
+      "array": [
+        {
+          "2": 2,
+          "10": 10
+        }
+      ]
+    },
+    "expected": "{\"array\":[{\"10\":10,\"2\":2}],\"nested\":{\"a\":0,\"min\":5e-324,\"z\":1e+23}}",
+    "digest": "FOoDvgjRR03DUGf3mjor94TPB3ugolwyGFqJ9iB0xUQ"
+  },
+  {
+    "input": {
+      "loneHigh": "\ud800",
+      "loneLow": "\udfff",
+      "validPair": "😀",
+      "\ud800": "surrogate key"
+    },
+    "expected": "{\"loneHigh\":\"\\ud800\",\"loneLow\":\"\\udfff\",\"validPair\":\"😀\",\"\\ud800\":\"surrogate key\"}",
+    "digest": "8bx7URjcaFSuJMQhAC3CV7DG4x0ZsBz0NSzyUXtBNEU"
+  }
+]

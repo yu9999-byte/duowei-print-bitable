@@ -7,6 +7,44 @@ import org.junit.jupiter.api.Test;
 
 class ProtocolTest {
     @Test
+    void objectKeyOrderUnicodeAndNestedDigestsMatchNode() throws Exception {
+        try (java.io.InputStream input =
+                getClass().getResourceAsStream("/node-object-vectors.json")) {
+            for (com.fasterxml.jackson.databind.JsonNode vector : Protocol.JSON.readTree(input)) {
+                String canonical = Protocol.canonical(vector.path("input"));
+                assertEquals(vector.path("expected").asText(), canonical);
+                assertEquals(vector.path("digest").asText(), Protocol.digest(canonical));
+            }
+        }
+    }
+
+    @Test
+    void matchesDeterministicNodeNumberVectors() throws Exception {
+        try (java.io.InputStream input =
+                getClass().getResourceAsStream("/node-number-vectors.json")) {
+            com.fasterxml.jackson.databind.JsonNode vectors = Protocol.JSON.readTree(input);
+            assertTrue(vectors.size() >= 990);
+            for (com.fasterxml.jackson.databind.JsonNode vector : vectors) {
+                long bits = new java.math.BigInteger(vector.path("bits").asText(), 16).longValue();
+                double value = Double.longBitsToDouble(bits);
+                assertEquals(
+                        vector.path("expected").asText(),
+                        Protocol.canonical(
+                                com.fasterxml.jackson.databind.node.DoubleNode.valueOf(value)),
+                        vector.path("bits").asText());
+            }
+        }
+    }
+
+    @Test
+    void shortestNumbersMatchNodeAtKnownJavaEightDivergences() throws Exception {
+        assertEquals(
+                "[1e+23,1e-7,1000000000000000100,5e-324]",
+                Protocol.canonical(
+                        Protocol.JSON.readTree("[1e23,1e-7,1000000000000000100,5e-324]")));
+    }
+
+    @Test
     void matchesNodeCompleteHmacTokenVector() {
         byte[] key = new byte[32];
         java.util.Arrays.fill(key, (byte) 42);
@@ -69,6 +107,13 @@ class ProtocolTest {
         assertEquals(
                 "test",
                 Protocol.verify(token, "test-v1", "test", body, key).path("audience").asText());
+        assertEquals(
+                "test",
+                Protocol.verify("  " + token + "  ", "test-v1", "test", body, key)
+                        .path("audience")
+                        .asText());
+        assertThrows(
+                SecurityException.class, () -> Protocol.verify(null, "test-v1", "test", body, key));
         assertThrows(
                 SecurityException.class,
                 () ->

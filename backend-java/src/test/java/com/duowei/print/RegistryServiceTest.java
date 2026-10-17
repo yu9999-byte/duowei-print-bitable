@@ -61,8 +61,15 @@ class RegistryServiceTest {
         RegistryService service = new RegistryService(store, config);
         JsonNode body =
                 Protocol.JSON.readTree(
-                        "{\"scope\":{\"tenantKey\":\"tenant\",\"baseToken\":\"base\",\"tableId\":\"table\"},\"template\":{}}");
+                        "{\"scope\":{\"tenantKey\":\"tenant\",\"baseToken\":\"base\",\"tableId\":\"table\"},\"template\":{\"id\":\"template\",\"revision\":\"r1\",\"name\":\"发货单\",\"snapshot\":{\"pages\":[]},\"referencedFieldIds\":[]}}");
         assertEquals(204, service.execute(body, token(body, true, key)).getStatusCodeValue());
         verify(store).upsert(body);
+        clearInvocations(store);
+        ObjectNode invalid = ((ObjectNode) body).deepCopy();
+        ((ObjectNode) invalid.path("template")).putArray("referencedFieldIds").add(42);
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> service.execute(invalid, token(invalid, true, key)));
+        verifyNoInteractions(store);
     }
 }

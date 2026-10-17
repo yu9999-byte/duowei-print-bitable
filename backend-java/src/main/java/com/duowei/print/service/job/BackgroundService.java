@@ -144,9 +144,9 @@ public class BackgroundService {
                 JsonNode body = normalizeSubmission((ObjectNode) persisted);
                 String jobId = String.valueOf(row.get("job_id"));
                 String taskKey = body.path("taskKey").asText();
-                  if (!(row.get("attempt") instanceof Number))
-                      throw new IllegalStateException("后台任务持久化尝试次数无效");
-                  int attempt = Integer.parseInt(String.valueOf(row.get("attempt")));
+                if (!(row.get("attempt") instanceof Number))
+                    throw new IllegalStateException("后台任务持久化尝试次数无效");
+                int attempt = Integer.parseInt(String.valueOf(row.get("attempt")));
                 String status = row.get("status") == null ? "" : String.valueOf(row.get("status"));
                 if (!jobId.equals(taskKey)
                         || !jobId.equals(row.get("task_key"))

@@ -49,7 +49,25 @@ public class AutomationController {
                     String signature,
             @RequestHeader(value = "x-duowei-tenant-access-token", defaultValue = "") String token,
             @RequestBody ObjectNode body) {
-        return background.submit(signature, token, body);
+        if (token.trim().length() < 20)
+            return jobFailure(400, "TENANT_TOKEN_REQUIRED", "后台任务缺少当前自动化的临时租户凭证");
+        try {
+            return background.submit(signature, token, body);
+        } catch (SecurityException error) {
+            return jobFailure(401, "AUTH_INVALID", error.getMessage());
+        } catch (IllegalArgumentException error) {
+            return jobFailure(400, "JOB_INVALID", error.getMessage());
+        }
+    }
+
+    private ResponseEntity<?> jobFailure(int status, String code, String message) {
+        ObjectNode result = com.duowei.print.security.Protocol.JSON.createObjectNode();
+        String trace = java.util.UUID.randomUUID().toString();
+        result.put("success", false)
+                .put("code", code)
+                .put("message", com.duowei.print.exception.SafeMessages.sanitize(message))
+                .put("traceId", trace);
+        return ResponseEntity.status(status).header("x-duowei-trace-id", trace).body(result);
     }
 
     @PostMapping("/openapi/duowei-print/events")

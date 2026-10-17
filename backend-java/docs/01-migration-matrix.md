@@ -37,12 +37,28 @@
 | automation-config.test.ts | ConfigurationTest | URL与密钥边界逐例对照 |
 | automation-openapi.controller.test.ts | RegistryContractTest、RenderContractTest、RequestErrorContractTest | 全部路由及错误响应 |
 | automation-bridge-document.test.ts | BridgeContractTest | 已覆盖静态页面契约；真实浏览器消息与恢复同步仍待验 |
-| browser-runtime.test.ts | RenderEnvelopeTest、RenderCacheTest、RenderTimeoutTest | 已覆盖模拟超时、取消、关闭及重试；启动诊断、独立页面与真实浏览器清理仍待验 |
+| browser-runtime.test.ts | RenderEnvelopeTest、RenderCacheTest、RenderTimeoutTest、BrowserLaunchTest | 已覆盖模拟超时、取消、关闭、重试及启动失败诊断；独立页面与真实浏览器清理仍待验 |
 | registry-row.test.ts | TemplateRowTest、RegistryServiceTest | 已覆盖读取映射；真实数据库往返及敏感快照异常仍待验 |
 | feishu-session-identity.test.ts | OAuthFailureTest仅部分相关 | 身份字段与编辑权限全部分支 |
 | background-job-row.test.ts | BackgroundRepositoryTest、BackgroundProcessingTest | 全部持久化状态与输入校验 |
 | background-job.test.ts | BackgroundValidationTest、BackgroundProcessingTest | 状态机、重复请求及全部失败阶段 |
-| feishu-oauth-session.test.ts | OAuthFailureTest | PKCE/state/session全部原断言 |
+| feishu-oauth-session.test.ts | OAuthFailureTest、OAuthRouteTest | 已覆盖PKCE、state消费、安全Cookie、会话签名复用、表格作用域隔离、恶意来源及取消回调；已补同源桥接303成功回跳与Cookie复用模拟验证；真实窗口交互仍待验 |
 | feishu-background-ports.test.ts | MarketplaceTokenTest、EventServiceTest、BackgroundProcessingTest、TenantCredentialTest | 已覆盖临时令牌过期清理、异常字段及20MiB上传边界模拟测试；真实上传仍待验 |
 
 补充Java测试：ProtocolTest、RenderNormalizationTest、RequestPolicyTest、AppTicketRepositoryTest。数据库集成、真实浏览器和真实飞书仍独立验收。
+
+## 原后台外围文件核对
+
+以下为业务模块之外的文件，不能仅凭17个业务接口映射宣称整个托管工程等价。
+
+| 原文件/目录 | 核对结果 | Java对应与边界 |
+| --- | --- | --- |
+| modules/hello/*.ts | Controller、Service均为整段注释的脚手架示例，无活动接口 | 不生成无效示例功能 |
+| modules/view/view.controller.ts | 根路径及通配路径渲染index，注入妙搭平台信息和CLIENT_BASE_PATH | Java仅包含打印引擎资源，未迁移妙搭前端SPA托管与平台信息注入；前端托管继续由现有工程承担，此适配差异须在切换前核对 |
+| main.ts | Nest启动、CORS、JSON请求限制、HTML引擎、静态资源目录 | Spring Boot启动、RequestPolicy及resources；独立部署的代理路径/静态前端托管尚未验收 |
+| app.module.ts、各module.ts | 依赖注入和妙搭平台模块注册 | Spring组件扫描；不直接复用妙搭Node运行时 |
+| common/interfaces、constants、filters | Nest全局兜底错误模型与平台BusinessException | ApiErrors与各业务Controller错误协议；平台BusinessException外形未证明等价，不能将业务错误测试扩展为所有平台异常兼容 |
+| database/schema.ts | 模板、任务、ticket表声明 | 两份兼容SQL迁移与JdbcTemplate Repository；PostgresIntegrationTest待配置专用测试库执行 |
+| generated/automation-renderer-document | 打印引擎生成资源 | resources/renderer.html及build-browser-resources.mjs；需真实浏览器验收 |
+
+更新的测试证据：BrowserLifecycleTest覆盖导航失败和启动期间关闭的模拟清理；FeishuResponseTest覆盖实际RestTemplate URL编码；PostgresIntegrationTest为显式环境变量启用的真实数据库测试，当前跳过。详细结果以02-verification.md为准。

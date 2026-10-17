@@ -8,6 +8,51 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 
 class ConfigurationTest {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "DUOWEI_REGISTRY_READ_SIGNING_SECRET_HEX,zz",
+        "DUOWEI_BACKGROUND_WORKER_INTERVAL_MS,100",
+        "DUOWEI_BACKGROUND_WORKER_INTERVAL_MS,60001",
+        "DUOWEI_BACKGROUND_WORKER_INTERVAL_MS,1.5",
+        "DUOWEI_RENDER_PAGE_URL,http://service.example/renderer",
+        "DUOWEI_FEISHU_APP_ID,app_wrong",
+        "DUOWEI_PUBLIC_AUTOMATION_BASE_URL,https://service.example/wrong",
+        "DUOWEI_OAUTH_REDIRECT_URI,https://other.example/oauth/callback"
+    })
+    void originalConfigurationFailureCasesAreRejected(String key, String value) {
+        Map<String, String> values = valid();
+        values.put(key, value);
+        assertThrows(RuntimeException.class, () -> new AutomationConfiguration(values).validate());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(
+            strings = {
+                "DUOWEI_SERVICE_AUTHORIZATION", "DUOWEI_RENDERER_SIGNING_SECRET_HEX",
+                "DUOWEI_BACKGROUND_JOB_SIGNING_SECRET_HEX", "DUOWEI_EVENT_VERIFICATION_TOKEN",
+                "DUOWEI_FEISHU_APP_SECRET"
+            })
+    void requiredConfigurationCannotBeEmpty(String key) {
+        Map<String, String> values = valid();
+        values.put(key, "");
+        assertThrows(
+                IllegalStateException.class, () -> new AutomationConfiguration(values).validate());
+    }
+
+    @Test
+    void legacyOpenApiCallbackAndWorkerBoundsRemainSupported() {
+        Map<String, String> values = valid();
+        values.put(
+                "DUOWEI_OAUTH_REDIRECT_URI",
+                "https://service.example/openapi/duowei-print/oauth/callback");
+        for (String interval : Arrays.asList("250", "60000")) {
+            values.put("DUOWEI_BACKGROUND_WORKER_INTERVAL_MS", interval);
+            AutomationConfiguration config = new AutomationConfiguration(values);
+            assertDoesNotThrow(config::validate);
+            assertEquals(Long.parseLong(interval), config.workerInterval());
+        }
+    }
+
     @Test
     void rejectsCommaOnlyOriginConfiguration() {
         Map<String, String> values = valid();

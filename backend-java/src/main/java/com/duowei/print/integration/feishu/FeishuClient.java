@@ -24,7 +24,11 @@ public class FeishuClient {
         headers.setContentType(type);
         if (token != null) headers.setBearerAuth(token);
         JsonNode result =
-                http.exchange(url, method, new HttpEntity<>(body, headers), JsonNode.class)
+                http.exchange(
+                                java.net.URI.create(url),
+                                method,
+                                new HttpEntity<>(body, headers),
+                                JsonNode.class)
                         .getBody();
         if (result == null
                 || !result.isObject()

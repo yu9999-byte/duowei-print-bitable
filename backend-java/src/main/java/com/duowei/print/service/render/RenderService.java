@@ -21,6 +21,8 @@ public class RenderService {
 
     private final java.util.concurrent.ConcurrentMap<String, ChromeDriver> active =
             new java.util.concurrent.ConcurrentHashMap<>();
+    private final Object lifecycle = new Object();
+    private boolean closed;
 
     public void cancel(String artifactKey) {
         ChromeDriver driver = active.remove(artifactKey);
@@ -33,7 +35,10 @@ public class RenderService {
 
     @javax.annotation.PreDestroy
     public void close() {
-        for (String key : active.keySet()) cancel(key);
+        synchronized (lifecycle) {
+            closed = true;
+            for (String key : active.keySet()) cancel(key);
+        }
     }
 
     public static class Artifact {
@@ -42,7 +47,14 @@ public class RenderService {
         public int pageCount;
     }
 
+    protected ChromeDriver createDriver(ChromeOptions options) {
+        return new ChromeDriver(options);
+    }
+
     public Artifact render(JsonNode body) {
+        synchronized (lifecycle) {
+            if (closed) throw new IllegalStateException("渲染服务已关闭");
+        }
         String type = Protocol.required(body.path("output"), "type");
         if (!Arrays.asList("pdf", "png").contains(type))
             throw new IllegalArgumentException("输出格式无效");
@@ -59,9 +71,17 @@ public class RenderService {
         options.addArguments("--headless=new", "--disable-dev-shm-usage");
         String binary = System.getenv("DUOWEI_CHROMIUM_EXECUTABLE_PATH");
         if (binary != null && !binary.isEmpty()) options.setBinary(binary);
-        ChromeDriver driver = new ChromeDriver(options);
-        active.put(body.path("artifactKey").asText(), driver);
+        ChromeDriver driver;
         try {
+            driver = createDriver(options);
+        } catch (RuntimeException error) {
+            throw launchFailure(error);
+        }
+        try {
+            synchronized (lifecycle) {
+                if (closed) throw new IllegalStateException("渲染服务已关闭");
+                active.put(body.path("artifactKey").asText(), driver);
+            }
             // Cancellation can arrive while ChromeDriver is still starting, before registration.
             if (Thread.currentThread().isInterrupted()) throw new IllegalStateException("生成文件已取消");
             driver.manage().timeouts().pageLoadTimeout(Duration.ofSeconds(30));
@@ -133,5 +153,27 @@ public class RenderService {
                 || !a.path("pageCount").isNumber()
                 || a.path("pageCount").doubleValue() != a.path("pageCount").asInt())
             throw new IllegalStateException("浏览器渲染协议版本不兼容");
+    }
+
+    public static IllegalStateException launchFailure(RuntimeException error) {
+        String raw =
+                error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+        StringJoiner actionable = new StringJoiner(" | ");
+        for (String line : raw.split("[\\r\\n]+")) {
+            if (line.matches(
+                    "(?i).*?(error while loading shared libraries|version .+ not found|not found \\(required by|exitCode=|signal=).*"))
+                actionable.add(line.trim());
+        }
+        String details = actionable.length() == 0 ? raw : actionable.toString();
+        // Redact before truncation so a cut cannot reveal part of a credential.
+        details = details.replaceAll("(?i)Bearer\\s+\\S+", "Bearer [已隐藏]");
+        details = details.substring(Math.max(0, details.length() - 400));
+        return new IllegalStateException(
+                "Chromium启动失败（platform="
+                        + System.getProperty("os.name")
+                        + ", arch="
+                        + System.getProperty("os.arch")
+                        + "）："
+                        + com.duowei.print.exception.SafeMessages.sanitize(details));
     }
 }

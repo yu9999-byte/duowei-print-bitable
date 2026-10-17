@@ -10,6 +10,22 @@ import com.duowei.print.service.event.EventService;
 import org.junit.jupiter.api.Test;
 
 class EventServiceTest {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(
+            strings = {"[]", "null", "42", "{\"token\":123}"})
+    void rejectsNonObjectEventsAndCoercedVerificationTokens(String json) throws Exception {
+        AppTicketRepository tickets = mock(AppTicketRepository.class);
+        AutomationConfiguration config = mock(AutomationConfiguration.class);
+        when(config.required("DUOWEI_EVENT_VERIFICATION_TOKEN")).thenReturn("123");
+        org.springframework.http.ResponseEntity<?> response =
+                new EventService(tickets, config).event(Protocol.JSON.readTree(json));
+        assertEquals(json.startsWith("{") ? 401 : 400, response.getStatusCodeValue());
+        assertEquals(
+                json.startsWith("{") ? "VERIFICATION_FAILED" : "JSON_INVALID",
+                ((java.util.Map<?, ?>) response.getBody()).get("code"));
+        verifyNoInteractions(tickets);
+    }
+
     @Test
     void preservesChallengeAndRejectsEmptyTicketWithOriginalErrorCode() throws Exception {
         AppTicketRepository tickets = mock(AppTicketRepository.class);

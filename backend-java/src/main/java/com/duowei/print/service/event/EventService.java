@@ -21,14 +21,18 @@ public class EventService {
     }
 
     public ResponseEntity<?> event(JsonNode body) {
+        if (body == null || !body.isObject())
+            return ResponseEntity.badRequest()
+                    .body(Collections.singletonMap("code", "JSON_INVALID"));
         if (body.path("encrypt").isTextual())
             return ResponseEntity.badRequest()
                     .body(Collections.singletonMap("code", "ENCRYPTED_EVENT_NOT_CONFIGURED"));
-        if (!MessageDigest.isEqual(
-                body.path("token").asText().getBytes(StandardCharsets.UTF_8),
-                configuration
-                        .required("DUOWEI_EVENT_VERIFICATION_TOKEN")
-                        .getBytes(StandardCharsets.UTF_8)))
+        if (!body.path("token").isTextual()
+                || !MessageDigest.isEqual(
+                        body.path("token").asText().getBytes(StandardCharsets.UTF_8),
+                        configuration
+                                .required("DUOWEI_EVENT_VERIFICATION_TOKEN")
+                                .getBytes(StandardCharsets.UTF_8)))
             return ResponseEntity.status(401)
                     .body(Collections.singletonMap("code", "VERIFICATION_FAILED"));
         if ("url_verification".equals(body.path("type").asText())

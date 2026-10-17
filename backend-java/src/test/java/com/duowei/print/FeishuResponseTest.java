@@ -14,6 +14,23 @@ import org.springframework.web.client.RestTemplate;
 
 class FeishuResponseTest {
     @org.junit.jupiter.api.Test
+    void encodedPathAndPaginationTokenAreNotEncodedTwice() {
+        FeishuClient client = new FeishuClient();
+        RestTemplate http = (RestTemplate) ReflectionTestUtils.getField(client, "http");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
+        String url =
+                "https://open.feishu.cn/open-apis/bitable/v1/apps/"
+                        + FeishuClient.enc("base/a")
+                        + "/tables/table/fields?page_token="
+                        + FeishuClient.enc("next/page+中文=");
+        server.expect(requestTo(url))
+                .andExpect(header("Authorization", "Bearer test-token"))
+                .andRespond(withSuccess("{\"code\":0,\"data\":{}}", MediaType.APPLICATION_JSON));
+        client.get(url, "test-token");
+        server.verify();
+    }
+
+    @org.junit.jupiter.api.Test
     void rejectsOAuthErrorEvenWhenHttpStatusIsSuccessful() {
         FeishuClient client = new FeishuClient();
         RestTemplate http = (RestTemplate) ReflectionTestUtils.getField(client, "http");

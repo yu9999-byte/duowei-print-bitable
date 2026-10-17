@@ -27,6 +27,17 @@ public class RequestPolicy extends OncePerRequestFilter {
         res.setHeader("X-Content-Type-Options", "nosniff");
         res.setHeader("Referrer-Policy", "no-referrer");
         res.setHeader("X-Duowei-Trace-Id", UUID.randomUUID().toString());
+        if ("/openapi/duowei-print/renderer".equals(req.getRequestURI())
+                && !java.security.MessageDigest.isEqual(
+                        configuration
+                                .required("DUOWEI_SERVICE_AUTHORIZATION")
+                                .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        Optional.ofNullable(req.getHeader("Authorization"))
+                                .orElse("")
+                                .getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
+            res.sendError(401);
+            return;
+        }
         String origin = req.getHeader("Origin");
         Set<String> configured =
                 origin == null ? Collections.emptySet() : configuration.allowedOrigins();

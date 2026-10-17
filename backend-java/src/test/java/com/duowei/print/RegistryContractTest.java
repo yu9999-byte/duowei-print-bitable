@@ -12,6 +12,37 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class RegistryContractTest {
     @Test
+    void missingSignatureIsAuthenticationRequiredBeforeServiceExecution() throws Exception {
+        RegistryService service = mock(RegistryService.class);
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new RegistryController(service)).build();
+        mvc.perform(
+                        post("/openapi/duowei-print/registry-write")
+                                .contentType("application/json")
+                                .content("{}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_REQUIRED"))
+                .andExpect(header().exists("x-duowei-trace-id"));
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void invalidTemplateReturnsOriginalCodeAndRedactsCredentials() throws Exception {
+        RegistryService service = mock(RegistryService.class);
+        when(service.execute(any(), anyString()))
+                .thenThrow(new IllegalArgumentException("Bearer private-token 模板无效"));
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new RegistryController(service)).build();
+        mvc.perform(
+                        post("/openapi/duowei-print/registry-write")
+                                .header("x-duowei-service-signature", "signed")
+                                .contentType("application/json")
+                                .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("TEMPLATE_INVALID"))
+                .andExpect(jsonPath("$.message").value("Bearer [已隐藏] 模板无效"))
+                .andExpect(header().exists("x-duowei-trace-id"));
+    }
+
+    @Test
     void keepsHealthAndReadWriteBoundaries() throws Exception {
         RegistryService service = mock(RegistryService.class);
         MockMvc mvc = MockMvcBuilders.standaloneSetup(new RegistryController(service)).build();

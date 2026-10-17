@@ -41,6 +41,7 @@ public class RegistryController {
             return ResponseEntity.status(405).body(error("WRITE_ONLY_ENDPOINT"));
         if (path.endsWith("registry-read") && !read)
             return ResponseEntity.status(405).body(error("READ_ONLY_ENDPOINT"));
+        if (signature.trim().isEmpty()) return failure(401, "AUTH_REQUIRED", "模板注册表请求缺少身份签名");
         return service.execute(body, signature);
     }
 
@@ -53,10 +54,17 @@ public class RegistryController {
 
     @ExceptionHandler({SecurityException.class, IllegalArgumentException.class})
     public ResponseEntity<?> error(RuntimeException e) {
-        Map<String, Object> m =
-                error(e instanceof SecurityException ? "AUTH_INVALID" : "REQUEST_INVALID");
-        m.put("message", e.getMessage());
-        m.put("traceId", UUID.randomUUID().toString());
-        return ResponseEntity.status(e instanceof SecurityException ? 401 : 400).body(m);
+        return failure(
+                e instanceof SecurityException ? 401 : 400,
+                e instanceof SecurityException ? "AUTH_INVALID" : "TEMPLATE_INVALID",
+                e.getMessage());
+    }
+
+    private ResponseEntity<?> failure(int status, String code, String message) {
+        Map<String, Object> m = error(code);
+        m.put("message", com.duowei.print.exception.SafeMessages.sanitize(message));
+        String trace = UUID.randomUUID().toString();
+        m.put("traceId", trace);
+        return ResponseEntity.status(status).header("x-duowei-trace-id", trace).body(m);
     }
 }

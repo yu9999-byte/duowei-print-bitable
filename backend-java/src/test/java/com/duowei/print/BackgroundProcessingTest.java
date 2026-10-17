@@ -48,8 +48,16 @@ class BackgroundProcessingTest {
         }
     }
 
-    @Test
-    void recoveryRejectsMismatchedPersistedTaskKeyBeforeCallingFeishu() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(
+            strings = {
+                "key",
+                "missingAttempt",
+                "negativeAttempt",
+                "fractionalAttempt",
+                "invalidStatus"
+            })
+    void recoveryRejectsInvalidPersistedRowBeforeCallingFeishu(String invalid) throws Exception {
         BackgroundJobRepository jobs = mock(BackgroundJobRepository.class);
         FeishuClient api = mock(FeishuClient.class);
         RenderService renderer = mock(RenderService.class);
@@ -58,9 +66,12 @@ class BackgroundProcessingTest {
         java.util.Map<String, Object> row = new java.util.HashMap<>();
         String taskKey = "duowei-job:v1:" + String.join("", java.util.Collections.nCopies(64, "a"));
         row.put("job_id", taskKey);
-        row.put("task_key", "different");
-        row.put("status", "queued");
-        row.put("attempt", 0);
+        row.put("task_key", "key".equals(invalid) ? "different" : taskKey);
+        row.put("status", "invalidStatus".equals(invalid) ? "unknown" : "queued");
+        if (!"missingAttempt".equals(invalid)) {
+            row.put("attempt", "negativeAttempt".equals(invalid) ? -1 : 0);
+            if ("fractionalAttempt".equals(invalid)) row.put("attempt", 0.5);
+        }
         row.put(
                 "submission",
                 "{\"version\":1,\"taskKey\":\""

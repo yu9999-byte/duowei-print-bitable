@@ -52,10 +52,14 @@ node backend-java/scripts/build-browser-resources.mjs
 
 ## 5. 验证与迁移状态
 
-2026-10-16已用真实OpenJDK 8u452和Maven 3.9.9完成编译、测试及打包；JAR在18081端口启动，健康接口返回成功，桥接页面HTTP 200。启动检查使用虚拟数据库地址，只证明应用启动和无数据库接口，未证明数据库业务链路。
+2026-10-17已用真实OpenJDK 8u452和Maven 3.9.9完成格式检查、编译、117项测试及打包，零失败、零错误；JAR在18081端口启动，健康接口返回成功，桥接页面HTTP 200。启动检查使用虚拟数据库地址，只证明应用启动和无数据库接口，未证明数据库业务链路。
 
-详见`docs/01-migration-matrix.md`和`docs/02-verification.md`。功能兼容核对仍在进行，不能将当前构建通过视为迁移全部完成。
+功能映射见[迁移对照](docs/01-migration-matrix.md)，当前验收见[验证记录](docs/02-verification.md)，历次证据见[验证历史](docs/03-verification-history.md)。功能兼容核对仍在进行，不能将当前构建通过视为迁移全部完成。
 
 ## 6. 部署边界
 
 HTTPS代理负责TLS。OAuth会话和临时租户凭证在进程内存，当前限单实例；重启后需重新连接或触发自动化。Java需要独立运行环境，不直接复用NestJS托管命令。真实飞书授权、PostgreSQL、PDF/PNG及附件回写尚需完整验收。本次不发布、不切换线上后台。
+
+HTTP路径及认证映射见[接口清单](docs/04-api-contracts.md)。
+
+协议测试向量从仓库根目录执行 node backend-java/scripts/generate-protocol-vectors.mjs 重新生成。仅测试开发需要Node，Java后台运行不依赖Node。

@@ -38,8 +38,7 @@ public final class Protocol {
             double number = node.doubleValue();
             if (!Double.isFinite(number)) throw new IllegalArgumentException("请求包含不可序列化数值");
             if (number == 0) return "0";
-            java.math.BigDecimal decimal =
-                    new java.math.BigDecimal(Double.toString(number)).stripTrailingZeros();
+            java.math.BigDecimal decimal = shortestDecimal(number);
             double absolute = Math.abs(number);
             if (absolute >= 1e-6 && absolute < 1e21) return decimal.toPlainString();
             String scientific = decimal.toString().replace("E", "e");
@@ -53,6 +52,36 @@ public final class Protocol {
 
     private static String quote(String text) {
         return new TextNode(text).toString();
+    }
+
+    /** Finds the nearest shortest decimal that round-trips to this IEEE-754 value. */
+    private static java.math.BigDecimal shortestDecimal(double number) {
+        java.math.BigDecimal exact = new java.math.BigDecimal(number);
+        for (int precision = 1; precision <= 17; precision++) {
+            java.math.BigDecimal rounded =
+                    exact.round(
+                            new java.math.MathContext(precision, java.math.RoundingMode.HALF_EVEN));
+            java.math.BigDecimal unit = rounded.ulp();
+            java.math.BigDecimal best = null;
+            java.math.BigDecimal distance = null;
+            for (int offset = -1; offset <= 1; offset++) {
+                java.math.BigDecimal candidate =
+                        rounded.add(unit.multiply(java.math.BigDecimal.valueOf(offset)))
+                                .stripTrailingZeros();
+                if (candidate.precision() > precision || candidate.doubleValue() != number)
+                    continue;
+                java.math.BigDecimal difference = candidate.subtract(exact).abs();
+                if (best == null
+                        || difference.compareTo(distance) < 0
+                        || difference.compareTo(distance) == 0
+                                && !candidate.unscaledValue().testBit(0)) {
+                    best = candidate;
+                    distance = difference;
+                }
+            }
+            if (best != null) return best;
+        }
+        throw new IllegalArgumentException("数值无法规范化");
     }
 
     public static String encode(byte[] bytes) {
@@ -98,7 +127,7 @@ public final class Protocol {
     public static JsonNode verify(
             String token, String prefix, String audience, JsonNode body, byte[] secret) {
         try {
-            String[] parts = token.split("\\.", -1);
+            String[] parts = token.trim().split("\\.", -1);
             if (parts.length != 3
                     || !prefix.equals(parts[0])
                     || !MessageDigest.isEqual(
