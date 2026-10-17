@@ -47,11 +47,23 @@ public final class Protocol {
             int exponent = Integer.parseInt(parts[1]);
             return parts[0] + "e" + (exponent >= 0 ? "+" : "") + exponent;
         }
-        return node.toString();
+        return node.isTextual() ? quote(node.textValue()) : node.toString();
     }
 
     private static String quote(String text) {
-        return new TextNode(text).toString();
+        String quoted = new TextNode(text).toString();
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < quoted.length(); i++) {
+            char current = quoted.charAt(i);
+            if (Character.isHighSurrogate(current)
+                    && i + 1 < quoted.length()
+                    && Character.isLowSurrogate(quoted.charAt(i + 1))) {
+                result.append(current).append(quoted.charAt(++i));
+            } else if (Character.isSurrogate(current)) {
+                result.append(String.format(Locale.ROOT, "\\u%04x", (int) current));
+            } else result.append(current);
+        }
+        return result.toString();
     }
 
     /** Finds the nearest shortest decimal that round-trips to this IEEE-754 value. */

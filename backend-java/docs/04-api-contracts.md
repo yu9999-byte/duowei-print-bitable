@@ -35,7 +35,7 @@
 
 - RegistryContractTest验证读写隔离、缺签名及非法模板错误；RegistryServiceTest验证签名和作用域。
 - OAuthRouteTest验证缺state与取消回调；OAuthFailureTest验证模拟授权、Cookie、桥接回跳及会话复用。
-- RenderContractTest验证缺签名、两组超时504、二进制及产物响应头；真实渲染仍待验。
+- RenderContractTest验证缺签名、两组超时504、二进制及产物响应头；真实Chrome已生成空白单页PDF/PNG，复杂模板和视觉结果仍待验。
 - BackgroundRouteTest验证租户凭证、任务错误、签名错误和trace一致性；BackgroundValidationTest验证有效签名及复用响应。
 - BridgeContractTest与EventServiceTest分别验证桥接静态契约、事件处理；浏览器交互及真实事件投递仍待验。
 - RequestErrorContractTest与RequestPolicyTest验证请求策略、内容类型、JSON、方法、大小及来源；代理前缀和线上托管鉴权尚未部署验收。

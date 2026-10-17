@@ -20,7 +20,7 @@ public class BackgroundJobRepository {
 
     public void createOrRetry(String key, String submission) {
         db.update(
-                "INSERT INTO duowei_automation_background_job(job_id,task_key,status,attempt,submission) VALUES(?,?,'queued',0,?::jsonb) ON CONFLICT(task_key) DO UPDATE SET status=CASE WHEN duowei_automation_background_job.status='failed' THEN 'queued' ELSE duowei_automation_background_job.status END,error=CASE WHEN duowei_automation_background_job.status='failed' THEN NULL ELSE duowei_automation_background_job.error END,updated_at=CURRENT_TIMESTAMP",
+                "INSERT INTO duowei_automation_background_job(job_id,task_key,status,attempt,submission) VALUES(?,?,'queued',0,?::jsonb) ON CONFLICT(task_key) DO UPDATE SET status='queued',error=NULL,updated_at=CURRENT_TIMESTAMP WHERE duowei_automation_background_job.status='failed'",
                 key,
                 key,
                 submission);

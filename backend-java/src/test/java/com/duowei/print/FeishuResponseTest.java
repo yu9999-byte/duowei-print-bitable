@@ -13,6 +13,23 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestTemplate;
 
 class FeishuResponseTest {
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "{}",
+                "{\"access_token\":\"token\",\"expires_in\":7200}",
+                "{\"code\":\"0\",\"access_token\":\"token\"}"
+            })
+    void oauthTokenRequiresOriginalNumericSuccessCode(String payload) {
+        FeishuClient client = new FeishuClient();
+        RestTemplate http = (RestTemplate) ReflectionTestUtils.getField(client, "http");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
+        String url = "https://accounts.feishu.cn/oauth/v3/token";
+        server.expect(requestTo(url)).andRespond(withSuccess(payload, MediaType.APPLICATION_JSON));
+        assertThrows(IllegalStateException.class, () -> client.get(url, null));
+        server.verify();
+    }
+
     @org.junit.jupiter.api.Test
     void encodedPathAndPaginationTokenAreNotEncodedTwice() {
         FeishuClient client = new FeishuClient();
@@ -57,7 +74,7 @@ class FeishuResponseTest {
         MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
         String payload =
                 url.contains("oauth/v3/token")
-                        ? "{\"access_token\":\"test-token\",\"expires_in\":7200}"
+                        ? "{\"code\":0,\"access_token\":\"test-token\",\"expires_in\":7200}"
                         : "{\"code\":0,\"data\":{}}";
         server.expect(requestTo(url)).andRespond(withSuccess(payload, MediaType.APPLICATION_JSON));
         assertTrue(client.get(url, null).isObject());

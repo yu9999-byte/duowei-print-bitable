@@ -36,8 +36,7 @@ public class FeishuClient {
                 || result.has("code")
                         && (!result.path("code").isNumber()
                                 || result.path("code").doubleValue() != 0.0)
-                || !result.has("code") && !url.equals("https://accounts.feishu.cn/oauth/v3/token"))
-            throw new IllegalStateException("飞书接口请求失败");
+                || !result.has("code")) throw new IllegalStateException("飞书接口请求失败");
         return result;
     }
 

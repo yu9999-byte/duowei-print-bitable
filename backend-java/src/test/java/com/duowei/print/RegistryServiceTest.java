@@ -47,6 +47,10 @@ class RegistryServiceTest {
                         .path("templates")
                         .isArray());
         verify(store).read(body);
+        ObjectNode paddedOperation = body.deepCopy();
+        paddedOperation.put("operation", " list ");
+        assertThrows(
+                IllegalArgumentException.class, () -> service.execute(paddedOperation, signature));
         ((ObjectNode) body.path("scope")).put("tableId", "other");
         assertThrows(SecurityException.class, () -> service.execute(body, signature));
         verifyNoMoreInteractions(store);

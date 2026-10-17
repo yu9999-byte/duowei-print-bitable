@@ -11,7 +11,6 @@ import com.duowei.print.service.job.BackgroundService;
 import com.duowei.print.service.render.RenderService;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.lang.reflect.Method;
-import org.junit.jupiter.api.Test;
 
 class BackgroundProcessingTest {
     @org.junit.jupiter.params.ParameterizedTest
@@ -90,8 +89,9 @@ class BackgroundProcessingTest {
         }
     }
 
-    @Test
-    void renderingFailurePersistsFailureAndDoesNotUpload() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"状态", " 状态 "})
+    void renderingFailurePersistsFailureAndDoesNotUpload(String statusName) throws Exception {
         BackgroundJobRepository jobs = mock(BackgroundJobRepository.class);
         FeishuClient api = mock(FeishuClient.class);
         RenderService renderer = mock(RenderService.class);
@@ -103,14 +103,17 @@ class BackgroundProcessingTest {
         when(api.get(anyString(), eq("token")))
                 .thenReturn(
                         Protocol.JSON.readTree(
-                                "{\"data\":{\"items\":[{\"field_id\":\"a\",\"field_name\":\"附件\",\"type\":17},{\"field_id\":\"s\",\"field_name\":\"状态\",\"type\":1}],\"has_more\":false}}"));
+                                "{\"data\":{\"items\":[{\"field_id\":\"a\",\"field_name\":\"附件\",\"type\":17},{\"field_id\":\"s\",\"field_name\":"
+                                        + Protocol.JSON.writeValueAsString(statusName)
+                                        + ",\"type\":1}],\"has_more\":false}}"));
         when(jobs.status("job")).thenReturn("queued");
         when(renderer.render(any())).thenThrow(new IllegalStateException("Bearer secret failed"));
         when(api.call(contains("/records/"), any(), any(), eq("token"), any()))
                 .thenAnswer(
                         invocation -> {
                             JsonNode fields = ((JsonNode) invocation.getArgument(2)).path("fields");
-                            if ("生成失败".equals(fields.path("状态").asText()))
+                            assertTrue(fields.has(statusName));
+                            if ("生成失败".equals(fields.path(statusName).asText()))
                                 throw new IllegalStateException("secondary write failure");
                             return Protocol.JSON.createObjectNode();
                         });
@@ -146,13 +149,13 @@ class BackgroundProcessingTest {
         when(config.workerInterval()).thenReturn(60000L);
         JsonNode body =
                 Protocol.JSON.readTree(
-                        "{\"baseToken\":\"base\",\"tableId\":\"table\",\"recordId\":\"record\",\"renderRequest\":{},\"targets\":{\"attachmentFieldId\":\"a\",\"statusFieldId\":\"s\"}}");
+                        "{\"baseToken\":\"base\",\"tableId\":\"table\",\"recordId\":\"record\",\"renderRequest\":{},\"targets\":{\"attachmentFieldId\":\"a\",\"statusFieldId\":\"s\",\"errorFieldId\":\"e\"}}");
         when(api.get(anyString(), eq("token")))
                 .thenReturn(
                         Protocol.JSON.readTree(
-                                "{\"data\":{\"items\":[{\"field_id\":\"a\",\"field_name\":\"attachment\",\"type\":17}],\"has_more\":true,\"page_token\":\"next/page\"}}"),
+                                "{\"data\":{\"items\":[{\"field_id\":\"a\",\"field_name\":\" attachment \",\"type\":17}],\"has_more\":true,\"page_token\":\" next/page+ \"}}"),
                         Protocol.JSON.readTree(
-                                "{\"data\":{\"items\":[{\"field_id\":\"s\",\"field_name\":\"status\",\"type\":1}],\"has_more\":false}}"));
+                                "{\"data\":{\"items\":[{\"field_id\":\"s\",\"field_name\":\" status \",\"type\":1},{\"field_id\":\"e\",\"field_name\":\" error \",\"type\":1}],\"has_more\":false}}"));
         when(jobs.status("job")).thenReturn("queued");
         RenderService.Artifact artifact = new RenderService.Artifact();
         artifact.bytes = new byte[byteCount];
@@ -175,7 +178,7 @@ class BackgroundProcessingTest {
                             "process", String.class, JsonNode.class, String.class);
             process.setAccessible(true);
             process.invoke(service, "job", body, "token");
-            verify(api).get(contains("page_token=next%2Fpage"), eq("token"));
+            verify(api).get(contains("page_token=%20next%2Fpage%2B%20"), eq("token"));
             if (byteCount > 20 * 1024 * 1024) {
                 verify(jobs).fail(eq("job"), contains("20MB"));
                 verify(api, never()).call(contains("upload_all"), any(), any(), any(), any());
@@ -210,10 +213,11 @@ class BackgroundProcessingTest {
             verify(jobs, never()).fail(anyString(), anyString());
             assertEquals(3, writes.size());
             JsonNode fields = writes.get(2).path("fields");
-            assertEquals(2, fields.size());
-            assertEquals("生成成功", fields.path("status").asText());
+            assertEquals(3, fields.size());
+            assertEquals("生成成功", fields.path(" status ").asText());
+            assertEquals("", fields.path(" error ").asText());
             assertEquals(
-                    "file-token", fields.path("attachment").get(0).path("file_token").asText());
+                    "file-token", fields.path(" attachment ").get(0).path("file_token").asText());
         } finally {
             service.close();
         }

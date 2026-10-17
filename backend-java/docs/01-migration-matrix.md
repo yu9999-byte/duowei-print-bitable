@@ -9,9 +9,9 @@
 | template-registry-service | service/security | 读写HMAC、作用域、摘要、时效 | 跨语言签名与异常对齐 |
 | template-registry.store / row | repository/model | 联合主键、ready筛选、修订、时间、JSON映射 | 数据库兼容测试；读取行校验状态、快照及字段引用数组 |
 | registry-write-authorization | service | draft白名单、身份核验、签发授权 | DTO及输入校验 |
-| feishu-oauth-session | service/integration | PKCE/state一次性、用户信息、编辑权限、会话、回跳 | Service已拆分，过期state失败HTML回调测试通过；成功授权链路待验 |
+| feishu-oauth-session | service/integration | PKCE/state一次性、用户信息、编辑权限、会话、回跳 | Service已拆分；过期state、PKCE、权限类型、成功会话及桥接回跳本地模拟测试通过；真实飞书待验 |
 | automation-bridge-document | resources/service | 来源与opener核验、恢复同步、CSP | 模板整理及协议测试 |
-| renderer-service / headless-renderer | service/render | 安全请求、HMAC、缓存、超时、产物校验、取消清理 | 已加入缓存、失败清除及超时取消；真实浏览器验收待完成 |
+| renderer-service / headless-renderer | service/render | 安全请求、HMAC、缓存、超时、产物校验、取消清理 | 已加入缓存、失败清除及超时取消；真实Chrome单页PDF/PNG通过，复杂模板和真实取消仍待验 |
 | browser-runtime | integration/render | 页面隔离、浏览器关闭、启动诊断 | 生命周期及配置注入 |
 | background-job-service / background-job | service/job | 请求规范化、幂等、失败重试、状态机、恢复 | Service/Repository已拆分；输入、失败持久化、重试与恢复查询测试通过；真实数据库待验 |
 | background-automation.service | service/job | 临时租户凭证、单Worker、凭证失效、恢复 | 生命周期与间隔配置 |
@@ -39,7 +39,7 @@
 | automation-bridge-document.test.ts | BridgeContractTest | 已覆盖静态页面契约；真实浏览器消息与恢复同步仍待验 |
 | browser-runtime.test.ts | RenderEnvelopeTest、RenderCacheTest、RenderTimeoutTest、BrowserLaunchTest | 已覆盖模拟超时、取消、关闭、重试及启动失败诊断；独立页面与真实浏览器清理仍待验 |
 | registry-row.test.ts | TemplateRowTest、RegistryServiceTest | 已覆盖读取映射；真实数据库往返及敏感快照异常仍待验 |
-| feishu-session-identity.test.ts | OAuthFailureTest仅部分相关 | 身份字段与编辑权限全部分支 |
+| feishu-session-identity.test.ts | 不属于活动路由；OAuthFailureTest覆盖当前身份链路 | identityFromMiaodaSession仅定义与自身测试引用，Gateway实际使用OAuth verifyIdentity；不把未接入的平台会话适配器作为已迁移能力 |
 | background-job-row.test.ts | BackgroundRepositoryTest、BackgroundProcessingTest | 全部持久化状态与输入校验 |
 | background-job.test.ts | BackgroundValidationTest、BackgroundProcessingTest | 状态机、重复请求及全部失败阶段 |
 | feishu-oauth-session.test.ts | OAuthFailureTest、OAuthRouteTest | 已覆盖PKCE、state消费、安全Cookie、会话签名复用、表格作用域隔离、恶意来源及取消回调；已补同源桥接303成功回跳与Cookie复用模拟验证；真实窗口交互仍待验 |
@@ -62,3 +62,21 @@
 | generated/automation-renderer-document | 打印引擎生成资源 | resources/renderer.html及build-browser-resources.mjs；需真实浏览器验收 |
 
 更新的测试证据：BrowserLifecycleTest覆盖导航失败和启动期间关闭的模拟清理；FeishuResponseTest覆盖实际RestTemplate URL编码；PostgresIntegrationTest为显式环境变量启用的真实数据库测试，当前跳过。详细结果以02-verification.md为准。
+
+OAuth对照补充：FeishuClient对OAuth Token响应严格要求数字code=0，与原feishu-oauth-session一致；OAuthRouteTest覆盖不受信任来源的IDENTITY_INVALID及响应trace一致性。授权开始/桥接跳转保留no-referrer，回调HTML保留nosniff及base-uri限制。
+
+## 后台任务状态机逐项对照（2026-10-17）
+
+| 原实现行为 | Java位置与证据 | 未证明部分 |
+| --- | --- | --- |
+| 新建queued/attempt=0；相同任务键复用；仅failed重试为queued并删除error，保留原submission/attempt | BackgroundJobRepository.createOrRetry的条件ON CONFLICT；BackgroundRepositoryTest | 真实PostgreSQL执行仍待配置 |
+| queued/processing按created_at恢复；检查任务键、状态及attempt | recoverable与BackgroundService.drain；BackgroundProcessingTest异常行测试 | 真实进程重启恢复未验收 |
+| 单Worker、临时租户凭证90分钟、到期不处理 | 单线程ScheduledExecutorService与tokenFor；TenantCredentialTest | 进程重启凭证丢失与原实现一致 |
+| queued先写等待，processing递增attempt，成功写附件和状态，失败保存原错误 | BackgroundService.process；BackgroundProcessingTest成功及失败分支 | 飞书真实写入和数据库事务未验收 |
+| 字段名原样作为飞书记录fields的键，包括首尾空格 | 保留metadata.textValue；成功测试覆盖附件/状态/错误三字段空格，失败测试覆盖状态空格 | 飞书真实字段待验 |
+| 上传上限20MiB，分页游标不修剪，multipart带文件MIME | BackgroundProcessingTest、FeishuHttpIntegrationTest | 真实飞书上传未验收 |
+
+已对齐提交后立即调度及启动立即扫描：submit在持久化及响应快照完成后向单线程Worker提交drain，start的首次扫描延迟为0。BackgroundValidationTest设置60秒扫描周期，验证提交后2秒内触发扫描；没有启动定时器，避免以周期扫描误判立即调度。关闭期间被拒绝的调度保留持久化任务供重启恢复。
+## 模板存储逐项对照（2026-10-17）
+
+原template-registry.store的五列联合冲突键与Java upsert一致，重复写更新名称、状态、快照、引用字段及updated_at；list限制ready并按updated_at倒序，get按作用域/ID/修订号查询且不过滤状态。TemplateRowTest覆盖行字段映射与非法引用字段，新增写入参数断言证明签名中的模板字符串未被静默trim。读取scope/selection按原parseRead修剪，operation按原实现严格接受list/get，不修剪枚举值。写签名scope按原verifyWrite精确比较，不把带空格作用域误认为同一作用域。真实数据库证据仍依赖PostgresIntegrationTest，当前未配置测试库。

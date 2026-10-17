@@ -7,7 +7,7 @@
 - JDK：Zulu OpenJDK 1.8.0_452。
 - Maven：3.9.9。
 - 从仓库根目录执行：`mvn -f backend-java/pom.xml -B spotless:apply clean verify`。
-- 最新结果：共118项，117项通过，1项PostgreSQL集成测试因未配置测试库跳过，零失败、零错误；Java格式检查、编译和打包成功。
+- 最新结果：共127项，126项通过，1项PostgreSQL集成测试因未配置测试库跳过，零失败、零错误；Java格式检查、编译和打包成功。
 - 产物：`backend-java/target/print-backend-1.0.0.jar`。
 - `git diff --check`通过。
 
@@ -21,7 +21,7 @@
 | 签名 | Node.js生成中文、负零及指数阈值canonical JSON/SHA-256向量，Java逐字断言；拒绝签名篡改、字符串及小数版本 | 尚未完整证明全部数值边界与跨语言HMAC协议 |
 | OAuth | 模拟成功授权、失败回调、PKCE、state一次性消费和会话测试 | 未进行真实飞书授权 |
 | 模板 | 作用域、签名、快照敏感字段、字段引用数组及持久化行校验 | 未在真实PostgreSQL执行upsert/read |
-| 渲染协议 | 规范化后验签；拒绝类型空格、小数页数；接受数值pageLimit=1.0；返回协议版本、数组及整数页数回归测试 | 未生成真实PDF/PNG |
+| 渲染协议 | 规范化后验签；拒绝类型空格、小数页数；接受数值pageLimit=1.0；返回协议版本、数组及整数页数回归测试 | 真实Chrome已生成单页PDF/PNG；复杂模板仍需验收 |
 | 渲染缓存 | 成功复用、失败后重试、两个调用共享同一产物的测试 | 未用真实浏览器验证并发、超时和取消 |
 | 浏览器生命周期 | 已实现Authorization、readiness等待、协议检查、finally关闭及启动后中断检查；编译通过 | 启动期间取消竞态及进程清理仍需真实浏览器验收 |
 | 后台任务 | 提交与恢复共用normalizeSubmission；输入不变、严格版本、幂等/失败重试查询、状态回写与标识一致性测试 | 真实数据库事务及重启恢复未验收 |
@@ -37,7 +37,7 @@
 3. 飞书测试环境：真实OAuth、字段分页、附件上传及记录回写；不得使用未授权的线上数据。
 4. 完整协议与原测试逐项映射，包括更全面的跨语言签名及数值边界向量。
 
-本机PATH未发现postgres、psql、docker或chromedriver，常规PostgreSQL安装目录不存在。Chrome和Edge可执行文件存在，尚缺匹配驱动。外部环境不足与实现缺陷分别记录，不以模拟测试冒充真实验收。
+本机PATH未发现postgres、psql或docker，常规PostgreSQL安装目录不存在。已在C:\codex-tmp安装ChromeDriver 155.0.8059.84，通过显式路径调用Chrome 155。外部环境不足与实现缺陷分别记录，不以模拟测试冒充真实验收。
 
 ## 4. 操作边界
 
@@ -48,3 +48,13 @@
 逐次修复、测试与构建证据见[验证与修复历史](03-verification-history.md)。
 
 PostgreSQL集成测试：PostgresIntegrationTest仅在DUOWEI_TEST_POSTGRES_URL显式配置时执行，账号变量为DUOWEI_TEST_POSTGRES_USERNAME与DUOWEI_TEST_POSTGRES_PASSWORD。连接必须指向授权的专用测试库，需CREATE SCHEMA权限。测试创建随机schema、执行两份真实迁移、验证模板upsert/read、任务失败重试/成功幂等和ticket覆盖，finally删除该临时schema；不读取应用数据库变量。当前未执行，不能计为数据库验证通过。
+
+## 6. 最新JAR启动检查
+
+2026-10-17，使用JDK8运行最新JAR，端口18089，本地测试凭据及不可用的本地数据库地址。真实HTTP结果：health=200且protocolVersion=1；匿名renderer=401；正确服务Bearer访问renderer=200（1427950字节）；event challenge=200并原样返回smoke。检查后已停止本次Java进程。该检查不证明数据库连通、实际Chrome渲染或飞书联调成功。
+
+## 7. 真实浏览器集成验证
+
+RealBrowserIntegrationTest使用真实Chrome、匹配ChromeDriver及本地HTTP服务加载随工程保存的renderer.html，校验服务Bearer访问并分别导出PDF和PNG。已生成target/real-browser.pdf及target/real-browser.png；PDF检查协议、文件头、EOF和单页数，PNG由ImageIO实际解码并检查600×800像素。测试模板为空白单页，不代表复杂模板、字体、图片、变量及分页视觉结果验收。
+
+设置DUOWEI_TEST_REAL_BROWSER=true、DUOWEI_CHROMIUM_EXECUTABLE_PATH为Chrome路径，Maven附加-Dwebdriver.chrome.driver=驱动完整路径即可执行。pom.xml通过selenium.version统一所有Selenium组件为4.8.3，避免Spring Boot将传递组件降为4.1.4导致真实浏览器连接失败。浏览器测试默认跳过；上述127项结果为显式启用浏览器后的构建，唯一跳过项是PostgreSQL测试。

@@ -49,7 +49,8 @@ public class RegistryService {
                         configuration.signingSecret("DUOWEI_REGISTRY_WRITE_SIGNING_SECRET_HEX"));
         if (!claims.path("canWrite").asBoolean()) throw new SecurityException("没有写入权限");
         for (String key : Arrays.asList("tenantKey", "baseToken", "tableId"))
-            if (!Protocol.required(body.path("scope"), key).equals(claims.path(key).asText()))
+            if (!body.path("scope").path(key).isTextual()
+                    || !body.path("scope").path(key).textValue().equals(claims.path(key).asText()))
                 throw new SecurityException("作用域不一致");
         JsonNode template = body.path("template");
         for (String key : Arrays.asList("id", "revision", "name")) Protocol.required(template, key);
@@ -64,7 +65,8 @@ public class RegistryService {
 
     private JsonNode normalizeRead(JsonNode input) {
         ObjectNode result = Protocol.JSON.createObjectNode();
-        String operation = Protocol.required(input, "operation");
+        String operation =
+                input.path("operation").isTextual() ? input.path("operation").textValue() : "";
         if (!Arrays.asList("get", "list").contains(operation))
             throw new IllegalArgumentException("读取操作无效");
         result.put("operation", operation);

@@ -15,6 +15,8 @@ class OAuthFailureTest {
                 new OAuthService(api, mock(com.duowei.print.config.AutomationConfiguration.class))
                         .callback("expired", "code");
         assertEquals(400, result.getStatusCodeValue());
+        assertEquals("no-referrer", result.getHeaders().getFirst("Referrer-Policy"));
+        assertEquals("nosniff", result.getHeaders().getFirst("X-Content-Type-Options"));
         assertTrue(result.getBody().toString().contains("duowei-print:oauth-failed"));
         assertTrue(
                 result.getHeaders()
@@ -53,6 +55,7 @@ class OAuthFailureTest {
         String location = oauth.start(state).getHeaders().getFirst("Location");
         assertTrue(location.contains("code_challenge_method=S256"));
         assertTrue(location.contains("scope=bitable%3Aapp"));
+        assertEquals("no-referrer", oauth.start(state).getHeaders().getFirst("Referrer-Policy"));
         assertEquals(400, oauth.callback(state, "").getStatusCodeValue());
         assertEquals(400, oauth.start(state).getStatusCodeValue());
         verifyNoInteractions(api);
@@ -120,6 +123,7 @@ class OAuthFailureTest {
             return;
         }
         assertEquals(bridge ? 303 : 200, result.getStatusCodeValue());
+        assertEquals("no-referrer", result.getHeaders().getFirst("Referrer-Policy"));
         if (bridge)
             assertEquals(
                     "https://service.example/api/automation/bridge",

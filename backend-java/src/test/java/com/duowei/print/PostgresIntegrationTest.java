@@ -78,8 +78,17 @@ class PostgresIntegrationTest {
                             String.class));
             jobs.processing("job");
             jobs.succeed("job", "file-token");
+            java.sql.Timestamp succeededAt =
+                    db.queryForObject(
+                            "SELECT updated_at FROM duowei_automation_background_job WHERE job_id='job'",
+                            java.sql.Timestamp.class);
             jobs.createOrRetry("job", "{}");
             assertEquals("succeeded", jobs.status("job"));
+            assertEquals(
+                    succeededAt,
+                    db.queryForObject(
+                            "SELECT updated_at FROM duowei_automation_background_job WHERE job_id='job'",
+                            java.sql.Timestamp.class));
             assertTrue(jobs.recoverable().isEmpty());
             AppTicketRepository tickets = new AppTicketRepository(db);
             assertNull(tickets.get("cli_test"));

@@ -24,8 +24,7 @@ public class BackgroundService {
 
     @javax.annotation.PostConstruct
     public void start() {
-        worker.scheduleWithFixedDelay(
-                this::drain, workerInterval, workerInterval, TimeUnit.MILLISECONDS);
+        worker.scheduleWithFixedDelay(this::drain, 0, workerInterval, TimeUnit.MILLISECONDS);
     }
 
     private final Map<String, String> tokens = new ConcurrentHashMap<>();
@@ -77,6 +76,11 @@ public class BackgroundService {
         result.put("reused", existing);
         String trace = UUID.randomUUID().toString();
         result.put("traceId", trace);
+        try {
+            worker.execute(this::drain);
+        } catch (RejectedExecutionException ignored) {
+            // Shutdown leaves the persisted job available for recovery on the next start.
+        }
         return ResponseEntity.status(existing ? 200 : 202)
                 .header("x-duowei-trace-id", trace)
                 .body(result);
@@ -217,8 +221,10 @@ public class BackgroundService {
                                         fields.put(f.path("field_id").asText(), f);
                                 });
                 page =
-                        data.path("has_more").isBoolean() && data.path("has_more").booleanValue()
-                                ? Protocol.required(data, "page_token")
+                        data.path("has_more").isBoolean()
+                                        && data.path("has_more").booleanValue()
+                                        && data.path("page_token").isTextual()
+                                ? data.path("page_token").textValue()
                                 : "";
             } while (!page.isEmpty());
             JsonNode targets = b.path("targets"),
@@ -232,8 +238,8 @@ public class BackgroundService {
                     || targets.has("errorFieldId")
                             && (error == null || error.path("type").asDouble(Double.NaN) != 1))
                 throw new IllegalArgumentException("选择的字段不存在或类型已变化");
-            statusName = Protocol.required(status, "field_name");
-            errorName = error == null ? null : Protocol.required(error, "field_name");
+            statusName = status.path("field_name").textValue();
+            errorName = error == null ? null : error.path("field_name").textValue();
             ObjectNode values = Protocol.JSON.createObjectNode();
             values.put(statusName, "等待生成");
             if (errorName != null) values.put(errorName, "");
@@ -270,7 +276,7 @@ public class BackgroundService {
                             MediaType.MULTIPART_FORM_DATA);
             String file = Protocol.required(upload.path("data"), "file_token");
             values.put(statusName, "生成成功");
-            values.putArray(Protocol.required(attachment, "field_name"))
+            values.putArray(attachment.path("field_name").textValue())
                     .addObject()
                     .put("file_token", file);
             update(b, token, values);

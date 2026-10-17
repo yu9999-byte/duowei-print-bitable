@@ -14,6 +14,26 @@ import org.springframework.jdbc.core.RowMapper;
 
 class TemplateRowTest {
     @Test
+    void writesSignedTemplateStringsWithoutSilentlyTrimmingThem() throws Exception {
+        JdbcTemplate db = mock(JdbcTemplate.class);
+        new TemplateStore(db)
+                .upsert(
+                        Protocol.JSON.readTree(
+                                "{\"scope\":{\"tenantKey\":\" tenant \",\"baseToken\":\"base\",\"tableId\":\"table\"},\"template\":{\"id\":\" id \",\"revision\":\" r1 \",\"name\":\" 发货单 \",\"snapshot\":{},\"referencedFieldIds\":[]}}"));
+        verify(db)
+                .update(
+                        anyString(),
+                        eq(" tenant "),
+                        eq("base"),
+                        eq("table"),
+                        eq(" id "),
+                        eq(" r1 "),
+                        eq(" 发货单 "),
+                        eq("{}"),
+                        eq("[]"));
+    }
+
+    @Test
     void preservesScopeRevisionSnapshotAndRejectsInvalidFields() throws Exception {
         JdbcTemplate db = mock(JdbcTemplate.class);
         ResultSet row = mock(ResultSet.class);

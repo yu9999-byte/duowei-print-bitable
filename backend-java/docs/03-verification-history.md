@@ -97,3 +97,32 @@ OAuth来源规范化：与原trustedOrigin一致，对Origin及x-duowei-plugin-o
 浏览器生命周期模拟验证：提取可替换的ChromeDriver创建入口，BrowserLifecycleTest验证导航前设置30秒页面超时、90秒脚本超时及Authorization；导航失败后quit，即使quit再次失败仍保留原导航异常，close不会重复关闭已移除driver。JDK8完整构建成功，117项中116通过、1项数据库测试跳过。此测试未启动真实Chrome，不证明操作系统进程清理成功。
 
 浏览器启动/关闭竞态修复：RenderService关闭标志与driver登记共用生命周期锁；关闭后拒绝新渲染，启动期间发生关闭时，晚返回的driver直接进入finally退出，不导航、不设置网络。模拟启动回调触发关闭验证通过。JDK8构建成功，118项中117通过、1项数据库测试跳过。真实Chrome进程验收仍未完成。
+
+Unicode签名边界修复：Node对象向量新增孤立高/低代理字符及代理字符键，修复前测试失败证明Jackson文本输出与JSON.stringify不一致；canonical引用字符串时将孤立代理字符转为小写Unicode转义，合法代理对保持原样。修复后Node canonical/SHA256向量通过，JDK8完整构建成功，118项中117通过、1项数据库测试跳过。
+
+重复任务持久化对齐：createOrRetry的ON CONFLICT更新增加failed状态条件，仅失败任务清error并排队；已排队/处理中/成功任务不再刷新updated_at或执行无效更新，与原createOrGet直接返回行为一致。SQL契约断言通过，真实数据库集成测试补成功重复提交时间戳不变断言但尚未执行。JDK8构建成功，118项中117通过、1项数据库测试跳过。
+
+真实本地HTTP客户端验证：FeishuHttpIntegrationTest启动JDK HttpServer监听127.0.0.1随机端口，以真实RestTemplate发送POST，服务端捕获实际URI、方法、Bearer头与中文JSON并返回中文响应，全部保持一致；finally停止服务。JDK8完整构建成功，119项中118通过、1项数据库测试跳过。此测试验证网络传输层，不调用真实飞书。
+
+真实本地multipart验证：HTTP服务捕获实际上传请求，验证multipart boundary、file字段名、filename、application/pdf、bitable_file表单值及含0/255的文件字节保持一致，响应file_token可读取。JDK8完整构建成功，120项中119通过、1项数据库测试跳过。该测试不代表飞书服务器接受上传。
+
+配置交付整理：按Java源码和application.properties提取变量，新增.env.example，覆盖数据库JDBC、业务凭据、四组签名密钥、URL/来源、Worker/端口、浏览器、本地HTTP开关及显式测试库。敏感值留空，并说明Spring Boot不自动读取dotenv。仅文档修改，沿用最近JDK8构建证据，不重复构建。
+
+分页游标原样保持：与原字段分页实现对齐，仅在has_more为布尔true且page_token为字符串时继续；不trim不解释游标内容。两页回归使用含首尾空格、斜杠与加号的token，验证第二页URL保留完整编码。JDK8构建成功，120项中119通过、1项数据库测试跳过。
+
+
+## 2026-10-17：真实Chrome渲染
+
+修复Spring Boot依赖管理将Selenium部分组件降到4.1.4的问题，统一为4.8.3。真实Chrome通过受Bearer保护的本地renderer页面生成单页PDF和PNG。JDK 8完整验证共121项、120项通过、1项PostgreSQL测试跳过。复杂模板和真实外部系统仍待验。
+
+## 2026-10-17：OAuth原实现对照
+
+OAuth Token恢复严格数字code=0校验，增加3个异常响应回归用例；授权错误恢复IDENTITY_INVALID，AUTH_REQUIRED补齐message/traceId及响应头，授权成功保留trace header。OAuth跳转和HTML恢复原安全响应头。新增两组路由来源拒绝与trace一致性验证。真实JDK8执行spotless:apply verify成功，125项中124项通过、1项数据库集成跳过，真实浏览器测试通过，git diff --check通过。
+
+## 2026-10-17：后台任务调度与字段名
+
+逐项对照原任务Store/Processor/BackgroundAutomationService：修复字段名被trim导致带空格字段回写键错误，成功用例保留附件/状态/错误三种名称，失败用例验证状态名称原样保留。补齐提交后立即唤醒单线程Worker及启动首次立即恢复扫描；60秒周期下的提交测试验证2秒内扫描，无需启动定时器。JDK8完整verify通过，126项中125项通过、1项数据库跳过，真实Chrome通过，格式与git diff --check通过。
+
+## 2026-10-17：模板存储对照
+
+对照原Registry Store与签名解析：保留写入字符串原值，scope精确验签，operation枚举不修剪。新增数据库写入参数回归测试及带空格operation拒绝断言。JDK8完整verify成功，127项中126项通过、1项PostgreSQL集成跳过，真实Chrome通过，格式及git diff --check通过。

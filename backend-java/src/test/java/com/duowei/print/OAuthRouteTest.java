@@ -16,6 +16,43 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class OAuthRouteTest {
     @Test
+    void untrustedAuthorizationOriginUsesOriginalIdentityErrorProtocol() throws Exception {
+        AutomationConfiguration config = mock(AutomationConfiguration.class);
+        when(config.required("DUOWEI_PUBLIC_AUTOMATION_BASE_URL"))
+                .thenReturn("https://service.example/openapi/duowei-print");
+        when(config.allowedOrigins())
+                .thenReturn(java.util.Collections.singleton("https://plugin.example"));
+        OAuthService oauth = new OAuthService(mock(FeishuClient.class), config);
+        MockMvc mvc =
+                MockMvcBuilders.standaloneSetup(
+                                new AutomationController(
+                                        oauth,
+                                        mock(BackgroundService.class),
+                                        mock(EventService.class)))
+                        .build();
+        for (String base : new String[] {"/api/automation", "/openapi/duowei-print"}) {
+            org.springframework.test.web.servlet.MvcResult result =
+                    mvc.perform(
+                                    post(base + "/registry-write-token")
+                                            .header("Origin", "https://evil.example")
+                                            .contentType(
+                                                    org.springframework.http.MediaType
+                                                            .APPLICATION_JSON)
+                                            .content(
+                                                    "{\"scope\":{\"baseToken\":\"base\",\"tableId\":\"table\"},\"template\":{}}"))
+                            .andExpect(status().isUnauthorized())
+                            .andExpect(jsonPath("$.code").value("IDENTITY_INVALID"))
+                            .andReturn();
+            org.junit.jupiter.api.Assertions.assertEquals(
+                    com.duowei.print.security.Protocol.JSON
+                            .readTree(result.getResponse().getContentAsString())
+                            .path("traceId")
+                            .asText(),
+                    result.getResponse().getHeader("x-duowei-trace-id"));
+        }
+    }
+
+    @Test
     void cancellationTakesPriorityOverCodeAndTrimsState() throws Exception {
         OAuthService oauth = mock(OAuthService.class);
         when(oauth.callback("state", ""))

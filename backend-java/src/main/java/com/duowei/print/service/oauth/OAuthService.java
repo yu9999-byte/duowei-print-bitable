@@ -91,8 +91,11 @@ public class OAuthService {
             ObjectNode result = Protocol.JSON.createObjectNode();
             result.put("success", false);
             result.put("code", "AUTH_REQUIRED");
+            result.put("message", "请先连接飞书账号以启用自动化模板同步");
+            String trace = UUID.randomUUID().toString();
+            result.put("traceId", trace);
             result.put("connectUrl", browser() + "/oauth/start?state=" + state);
-            return ResponseEntity.status(401).body(result);
+            return ResponseEntity.status(401).header("x-duowei-trace-id", trace).body(result);
         }
         ObjectNode authorized = body.deepCopy();
         ((ObjectNode) authorized.path("scope"))
@@ -113,7 +116,10 @@ public class OAuthService {
                         claims,
                         configuration.signingSecret("DUOWEI_REGISTRY_WRITE_SIGNING_SECRET_HEX")));
         result.set("body", authorized);
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(result);
+        return ResponseEntity.ok()
+                .header("x-duowei-trace-id", UUID.randomUUID().toString())
+                .cacheControl(CacheControl.noStore())
+                .body(result);
     }
 
     public ResponseEntity<?> start(String state) {
@@ -132,6 +138,7 @@ public class OAuthService {
                         + "&code_challenge_method=S256";
         return ResponseEntity.status(302)
                 .header("Location", url)
+                .header("Referrer-Policy", "no-referrer")
                 .cacheControl(CacheControl.noStore())
                 .build();
     }
@@ -192,18 +199,21 @@ public class OAuthService {
             if (item.path("bridge").asBoolean())
                 return ResponseEntity.status(303)
                         .header("Location", browser() + "/bridge")
+                        .header("Referrer-Policy", "no-referrer")
                         .header("Set-Cookie", cookie)
                         .cacheControl(CacheControl.noStore())
                         .build();
             String nonce = random();
             String origin = item.path("origin").toString().replace("<", "\\u003c");
             return ResponseEntity.ok()
+                    .header("Referrer-Policy", "no-referrer")
+                    .header("X-Content-Type-Options", "nosniff")
                     .header("Set-Cookie", cookie)
                     .header(
                             "Content-Security-Policy",
                             "default-src 'none'; script-src 'nonce-"
                                     + nonce
-                                    + "'; frame-ancestors 'none'")
+                                    + "'; base-uri 'none'; frame-ancestors 'none'")
                     .contentType(MediaType.TEXT_HTML)
                     .cacheControl(CacheControl.noStore())
                     .body(
@@ -232,13 +242,15 @@ public class OAuthService {
                         + new TextNode(origin).toString().replace("<", "\\u003c")
                         + ");";
         return ResponseEntity.status(status)
+                .header("Referrer-Policy", "no-referrer")
+                .header("X-Content-Type-Options", "nosniff")
                 .contentType(MediaType.TEXT_HTML)
                 .cacheControl(CacheControl.noStore())
                 .header(
                         "Content-Security-Policy",
                         "default-src 'none'; script-src 'nonce-"
                                 + nonce
-                                + "'; frame-ancestors 'none'")
+                                + "'; base-uri 'none'; frame-ancestors 'none'")
                 .body(
                         "<!doctype html><meta charset='utf-8'><p>连接失败，请返回多维打印重新连接。</p><script nonce='"
                                 + nonce

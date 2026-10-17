@@ -53,6 +53,7 @@ class BackgroundValidationTest {
             assertEquals(
                     response.get("traceId"), result.getHeaders().getFirst("x-duowei-trace-id"));
             verify(jobs).createOrRetry(taskKey, body.toString());
+            verify(jobs, timeout(2000)).recoverable();
             clearInvocations(jobs);
             claims.put("taskKey", "different");
             String wrongSignature = Protocol.sign("duowei-background-job-v1", claims, key);

@@ -27,7 +27,11 @@ public class AutomationController {
         "/openapi/duowei-print/registry-write-token"
     })
     public ResponseEntity<?> authorize(HttpServletRequest request, @RequestBody ObjectNode body) {
-        return oauth.authorize(request, body);
+        try {
+            return oauth.authorize(request, body);
+        } catch (SecurityException error) {
+            return jobFailure(401, "IDENTITY_INVALID", error.getMessage());
+        }
     }
 
     @GetMapping({"/api/automation/oauth/start", "/openapi/duowei-print/oauth/start"})

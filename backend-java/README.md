@@ -22,6 +22,8 @@ Spring Boot 2.7.18、Maven、JDK 8、PostgreSQL、Selenium 4.8.3。
 
 ## 2. 环境配置
 
+完整变量示例见[.env.example](.env.example)。该文件仅作配置参考，Spring Boot不会自动读取；请通过PowerShell环境变量或进程管理器注入。真实凭据不要写入示例或提交Git。
+
 数据库：`DUOWEI_DATABASE_URL`（JDBC PostgreSQL URL）、`DUOWEI_DATABASE_USERNAME`、`DUOWEI_DATABASE_PASSWORD`。
 
 业务：`DUOWEI_PUBLIC_AUTOMATION_BASE_URL`（HTTPS，结尾`/openapi/duowei-print`）、`DUOWEI_OAUTH_REDIRECT_URI`、`DUOWEI_ALLOWED_ORIGINS`、`DUOWEI_FEISHU_APP_ID`、`DUOWEI_FEISHU_APP_SECRET`、`DUOWEI_SERVICE_AUTHORIZATION`（Bearer）、`DUOWEI_EVENT_VERIFICATION_TOKEN`。
@@ -52,13 +54,13 @@ node backend-java/scripts/build-browser-resources.mjs
 
 ## 5. 验证与迁移状态
 
-2026-10-17已用真实OpenJDK 8u452和Maven 3.9.9完成格式检查、编译、117项测试及打包，零失败、零错误；JAR在18081端口启动，健康接口返回成功，桥接页面HTTP 200。启动检查使用虚拟数据库地址，只证明应用启动和无数据库接口，未证明数据库业务链路。
+2026-10-17已用真实OpenJDK 8u452和Maven 3.9.9完成格式检查、编译、126项通过测试（共127项，1项数据库测试跳过）及打包，零失败、零错误；JAR在18081端口启动，健康接口返回成功，桥接页面HTTP 200。启动检查使用虚拟数据库地址，只证明应用启动和无数据库接口，未证明数据库业务链路。
 
 功能映射见[迁移对照](docs/01-migration-matrix.md)，当前验收见[验证记录](docs/02-verification.md)，历次证据见[验证历史](docs/03-verification-history.md)。功能兼容核对仍在进行，不能将当前构建通过视为迁移全部完成。
 
 ## 6. 部署边界
 
-HTTPS代理负责TLS。OAuth会话和临时租户凭证在进程内存，当前限单实例；重启后需重新连接或触发自动化。Java需要独立运行环境，不直接复用NestJS托管命令。真实飞书授权、PostgreSQL、PDF/PNG及附件回写尚需完整验收。本次不发布、不切换线上后台。
+HTTPS代理负责TLS。OAuth会话和临时租户凭证在进程内存，当前限单实例；重启后需重新连接或触发自动化。Java需要独立运行环境，不直接复用NestJS托管命令。真实Chrome已导出空白单页PDF/PNG；复杂模板、真实飞书授权、PostgreSQL及附件回写尚需完整验收。本次不发布、不切换线上后台。
 
 HTTP路径及认证映射见[接口清单](docs/04-api-contracts.md)。
 

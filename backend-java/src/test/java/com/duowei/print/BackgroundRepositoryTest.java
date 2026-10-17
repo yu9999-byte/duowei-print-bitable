@@ -19,7 +19,8 @@ class BackgroundRepositoryTest {
         verify(db).update(sql.capture(), eq("job"), eq("job"), eq("{\"taskKey\":\"job\"}"));
         String update = sql.getValue().split("DO UPDATE SET")[1];
         assertTrue(update.contains("status='failed'"));
-        assertTrue(update.contains("THEN NULL"));
+        assertTrue(update.contains("error=NULL"));
+        assertTrue(update.contains("WHERE duowei_automation_background_job.status='failed'"));
         assertFalse(update.contains("submission="));
     }
 

@@ -27,14 +27,19 @@ public class TemplateStore {
                         });
         db.update(
                 "INSERT INTO duowei_automation_template(tenant_key,base_token,table_id,template_id,revision,name,status,snapshot,referenced_field_ids) VALUES(?,?,?,?,?,?,'ready',?::jsonb,?::jsonb) ON CONFLICT(tenant_key,base_token,table_id,template_id,revision) DO UPDATE SET name=excluded.name,status=excluded.status,snapshot=excluded.snapshot,referenced_field_ids=excluded.referenced_field_ids,updated_at=CURRENT_TIMESTAMP",
-                Protocol.required(s, "tenantKey"),
-                Protocol.required(s, "baseToken"),
-                Protocol.required(s, "tableId"),
-                Protocol.required(t, "id"),
-                Protocol.required(t, "revision"),
-                Protocol.required(t, "name"),
+                requiredRaw(s, "tenantKey"),
+                requiredRaw(s, "baseToken"),
+                requiredRaw(s, "tableId"),
+                requiredRaw(t, "id"),
+                requiredRaw(t, "revision"),
+                requiredRaw(t, "name"),
                 t.path("snapshot").toString(),
                 t.path("referencedFieldIds").toString());
+    }
+
+    private String requiredRaw(JsonNode object, String field) {
+        Protocol.required(object, field);
+        return object.path(field).textValue();
     }
 
     public List<JsonNode> read(JsonNode body) {
