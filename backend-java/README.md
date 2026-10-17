@@ -54,14 +54,30 @@ node backend-java/scripts/build-browser-resources.mjs
 
 ## 5. 验证与迁移状态
 
-2026-10-17已用真实OpenJDK 8u452和Maven 3.9.9完成格式检查、编译、126项通过测试（共127项，1项数据库测试跳过）及打包，零失败、零错误；JAR在18081端口启动，健康接口返回成功，桥接页面HTTP 200。启动检查使用虚拟数据库地址，只证明应用启动和无数据库接口，未证明数据库业务链路。
+真实渲染测试已加强到两页文本和稳定字段变量。曾因测试模板缺少style导致失败，补齐有效模板后通过；定位证据见验证记录第2节。
+
+2026-10-17已用真实OpenJDK 8u452和Maven 3.9.9完成格式检查、编译、145项通过测试（共146项，1项数据库测试跳过）及打包，零失败、零错误；JAR在18081端口启动，健康接口返回成功，桥接页面HTTP 200。启动检查使用虚拟数据库地址，只证明应用启动和无数据库接口，未证明数据库业务链路。
 
 功能映射见[迁移对照](docs/01-migration-matrix.md)，当前验收见[验证记录](docs/02-verification.md)，历次证据见[验证历史](docs/03-verification-history.md)。功能兼容核对仍在进行，不能将当前构建通过视为迁移全部完成。
 
 ## 6. 部署边界
 
-HTTPS代理负责TLS。OAuth会话和临时租户凭证在进程内存，当前限单实例；重启后需重新连接或触发自动化。Java需要独立运行环境，不直接复用NestJS托管命令。真实Chrome已导出空白单页PDF/PNG；复杂模板、真实飞书授权、PostgreSQL及附件回写尚需完整验收。本次不发布、不切换线上后台。
+HTTPS代理负责TLS。OAuth会话和临时租户凭证在进程内存，当前限单实例；重启后需重新连接或触发自动化。Java需要独立运行环境，不直接复用NestJS托管命令。真实Chrome已导出两页PDF及第一页PNG，并验证变量值改变输出像素；复杂模板、真实飞书授权、PostgreSQL及附件回写尚需完整验收。本次不发布、不切换线上后台。
 
 HTTP路径及认证映射见[接口清单](docs/04-api-contracts.md)。
 
 协议测试向量从仓库根目录执行 node backend-java/scripts/generate-protocol-vectors.mjs 重新生成。仅测试开发需要Node，Java后台运行不依赖Node。
+
+桥接脚本独立验证：从仓库根运行 node backend-java/scripts/verify-bridge.mjs（需要原妙搭工程已安装esbuild依赖）。脚本与原后台实际生成的运行代码逐字比较，并执行来源/窗口/版本、同步、脱敏、OAuth恢复及跳转限制测试；不计入Maven测试数量，不代替真实浏览器窗口验收。
+
+## 7. 格式约定
+
+Java由Maven Spotless按AOSP四空格检查。辅助.mjs脚本通过已安装的esbuild统一打印，使用两空格缩进；从仓库根执行：
+
+```powershell
+node backend-java/scripts/format-scripts.mjs --write
+node backend-java/scripts/format-scripts.mjs
+node backend-java/scripts/verify-bridge.mjs
+```
+
+.editorconfig统一UTF-8、LF、文件末尾换行和缩进。renderer.html是压缩生成资源，bridge.js保留原后台运行脚本以支持逐字对照，不手工重新排版；SQL迁移保留原内容以便哈希对照。格式化后重建资源和协议向量，已确认产物内容不变。Node/esbuild仅用于开发构建与辅助验证，Java服务运行不依赖Node。

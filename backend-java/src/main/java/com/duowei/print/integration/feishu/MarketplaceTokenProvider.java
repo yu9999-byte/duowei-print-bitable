@@ -71,17 +71,50 @@ public final class MarketplaceTokenProvider {
     }
 
     private Entry entry(JsonNode response, String field) {
-        String token = Protocol.required(response, field);
-        double seconds = response.path("expire").asDouble(3600);
+        Protocol.required(response, field);
+        double seconds = expiryNumber(response.path("expire"));
         if (!Double.isFinite(seconds)) seconds = 3600;
-        return new Entry(token, clock.getAsLong() + (long) (seconds * 1000));
+        return new Entry(response.path(field).textValue(), clock.getAsLong() + seconds * 1000);
+    }
+
+    private double expiryNumber(JsonNode value) {
+        if (value.isMissingNode() || value.isObject()) return Double.NaN;
+        if (value.isNull()) return 0;
+        if (value.isBoolean()) return value.booleanValue() ? 1 : 0;
+        if (value.isNumber()) return value.doubleValue();
+        String text = value.isArray() ? arrayText(value) : value.asText();
+        text = text.trim();
+        if (text.isEmpty()) return 0;
+        try {
+            if (text.matches("0[xX][0-9a-fA-F]+"))
+                return new java.math.BigInteger(text.substring(2), 16).doubleValue();
+            if (text.matches("0[bB][01]+"))
+                return new java.math.BigInteger(text.substring(2), 2).doubleValue();
+            if (text.matches("0[oO][0-7]+"))
+                return new java.math.BigInteger(text.substring(2), 8).doubleValue();
+            return new java.math.BigDecimal(text).doubleValue();
+        } catch (NumberFormatException invalid) {
+            return Double.NaN;
+        }
+    }
+
+    private String arrayText(JsonNode array) {
+        java.util.StringJoiner result = new java.util.StringJoiner(",");
+        for (JsonNode value : array)
+            result.add(
+                    value.isNull()
+                            ? ""
+                            : value.isArray()
+                                    ? arrayText(value)
+                                    : value.isObject() ? "[object Object]" : value.asText());
+        return result.toString();
     }
 
     private static final class Entry {
         final String token;
-        final long expiresAt;
+        final double expiresAt;
 
-        Entry(String token, long expiresAt) {
+        Entry(String token, double expiresAt) {
             this.token = token;
             this.expiresAt = expiresAt;
         }

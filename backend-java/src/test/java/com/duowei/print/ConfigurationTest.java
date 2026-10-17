@@ -9,6 +9,26 @@ import org.junit.jupiter.api.Test;
 
 class ConfigurationTest {
     @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(
+            strings = {" 2000 ", "2e3", "2000.0", "0x7d0", "0b11111010000", "0o3720"})
+    void workerIntervalPreservesOriginalNumericConfigurationForms(String value) {
+        Map<String, String> values = valid();
+        values.put("DUOWEI_BACKGROUND_WORKER_INTERVAL_MS", value);
+        assertEquals(2000, new AutomationConfiguration(values).workerInterval());
+    }
+
+    @Test
+    void originListSkipsEmptyItemsAndNormalizesHostAndDefaultPort() {
+        Map<String, String> values = valid();
+        values.put(
+                "DUOWEI_ALLOWED_ORIGINS",
+                ", https://PLUGIN.example:443/,,https://plugin.example, ");
+        assertEquals(
+                Collections.singleton("https://plugin.example"),
+                new AutomationConfiguration(values).allowedOrigins());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.CsvSource({
         "DUOWEI_REGISTRY_READ_SIGNING_SECRET_HEX,zz",
         "DUOWEI_BACKGROUND_WORKER_INTERVAL_MS,100",

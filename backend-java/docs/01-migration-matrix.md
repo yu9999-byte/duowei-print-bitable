@@ -11,7 +11,7 @@
 | registry-write-authorization | service | draft白名单、身份核验、签发授权 | DTO及输入校验 |
 | feishu-oauth-session | service/integration | PKCE/state一次性、用户信息、编辑权限、会话、回跳 | Service已拆分；过期state、PKCE、权限类型、成功会话及桥接回跳本地模拟测试通过；真实飞书待验 |
 | automation-bridge-document | resources/service | 来源与opener核验、恢复同步、CSP | 模板整理及协议测试 |
-| renderer-service / headless-renderer | service/render | 安全请求、HMAC、缓存、超时、产物校验、取消清理 | 已加入缓存、失败清除及超时取消；真实Chrome单页PDF/PNG通过，复杂模板和真实取消仍待验 |
+| renderer-service / headless-renderer | service/render | 安全请求、HMAC、缓存、超时、产物校验、取消清理 | 已加入缓存、失败清除及超时取消；真实Chrome两页PDF/第一页PNG及变量像素变化通过；真实超时关闭会话及同键重试通过，复杂模板和系统进程残留仍待验 |
 | browser-runtime | integration/render | 页面隔离、浏览器关闭、启动诊断 | 生命周期及配置注入 |
 | background-job-service / background-job | service/job | 请求规范化、幂等、失败重试、状态机、恢复 | Service/Repository已拆分；输入、失败持久化、重试与恢复查询测试通过；真实数据库待验 |
 | background-automation.service | service/job | 临时租户凭证、单Worker、凭证失效、恢复 | 生命周期与间隔配置 |
@@ -80,3 +80,12 @@ OAuth对照补充：FeishuClient对OAuth Token响应严格要求数字code=0，�
 ## 模板存储逐项对照（2026-10-17）
 
 原template-registry.store的五列联合冲突键与Java upsert一致，重复写更新名称、状态、快照、引用字段及updated_at；list限制ready并按updated_at倒序，get按作用域/ID/修订号查询且不过滤状态。TemplateRowTest覆盖行字段映射与非法引用字段，新增写入参数断言证明签名中的模板字符串未被静默trim。读取scope/selection按原parseRead修剪，operation按原实现严格接受list/get，不修剪枚举值。写签名scope按原verifyWrite精确比较，不把带空格作用域误认为同一作用域。真实数据库证据仍依赖PostgresIntegrationTest，当前未配置测试库。
+## 配置测试对照（2026-10-17）
+
+原automation-config.test.ts的完整HTTPS配置、Bearer、四组密钥、事件token、Worker下限、App ID、公开路径及跨来源回调拒绝均有ConfigurationTest覆盖，兼容旧OpenAPI回调地址及250/60000边界。补齐原Number环境值支持的十进制小数整数、科学记数法及十六/二/八进制整数；结果仍限制250到60000，非整数/空值/越界拒绝。来源列表忽略空项，域名小写、HTTPS默认443省略；继续应用OAuth要求的HTTPS origin限制，不宣称所有WHATWG URL解析细节与java.net.URI完全等价。
+## 商店令牌缓存对照（2026-10-17）
+
+MarketplaceTokenProvider保留原app_ticket→app_access_token→tenant_access_token链路，租户键修剪并隔离缓存，剩余有效期严格大于30分钟才复用。expire沿用原Number转换：null/空字符串/空数组为0，布尔值为0/1，数字字符串和单值数组可转换，缺失/对象/非法字符串/非有限值回退3600秒。缓存截止时刻使用double避免巨大秒数转long溢出，令牌仅验证非空后保留原始内容；MarketplaceTokenTest新增11组转换与交换次数断言。真实飞书交换仍未执行，该可选Provider未替代Worker的临时租户凭证路径。
+## 桥接脚本运行对照（2026-10-17）
+
+scripts/verify-bridge.mjs在本地编译原automation-bridge-document.ts，取其实际生成脚本与Java bridge.js注入同一来源/端点后的脚本逐字比较，结果一致。使用Node VM执行生成资源，验证不受信任来源/非opener/错误版本无网络操作、probe回应、授权后签名仅传注册请求、成功回执不泄露签名、错误信息脱敏、OAuth保存与返回恢复、过期状态删除及不可信连接地址拒绝。命令node backend-java/scripts/verify-bridge.mjs退出0。证据为脚本运行协议，不是真实浏览器popup或第三方Cookie验证；Java CSP/nonce/HTTP头由BridgeContractTest独立验证。

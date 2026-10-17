@@ -62,7 +62,10 @@ public class RenderCache {
             throw new IllegalStateException("生成文件已取消", e);
         } catch (ExecutionException e) {
             cache.remove(key, task);
-            throw new IllegalStateException("生成文件失败", e.getCause());
+            Throwable cause = e.getCause();
+            String message = cause == null ? null : cause.getMessage();
+            throw new IllegalStateException(
+                    message == null || message.trim().isEmpty() ? "生成文件失败" : message, cause);
         }
     }
 

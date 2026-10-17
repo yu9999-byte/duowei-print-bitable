@@ -49,8 +49,19 @@ public class AutomationConfiguration {
     }
 
     public long workerInterval() {
-        long value =
-                Long.parseLong(values.getOrDefault("DUOWEI_BACKGROUND_WORKER_INTERVAL_MS", "2000"));
+        String raw = values.getOrDefault("DUOWEI_BACKGROUND_WORKER_INTERVAL_MS", "2000").trim();
+        long value;
+        try {
+            if (raw.matches("0[xX][0-9a-fA-F]+"))
+                value = new java.math.BigInteger(raw.substring(2), 16).longValueExact();
+            else if (raw.matches("0[bB][01]+"))
+                value = new java.math.BigInteger(raw.substring(2), 2).longValueExact();
+            else if (raw.matches("0[oO][0-7]+"))
+                value = new java.math.BigInteger(raw.substring(2), 8).longValueExact();
+            else value = new java.math.BigDecimal(raw).longValueExact();
+        } catch (RuntimeException invalid) {
+            throw new IllegalStateException("Worker间隔必须为250到60000毫秒的整数");
+        }
         if (value < 250 || value > 60000) throw new IllegalStateException("Worker间隔必须为250到60000毫秒");
         return value;
     }
@@ -58,6 +69,7 @@ public class AutomationConfiguration {
     public Set<String> allowedOrigins() {
         Set<String> result = new LinkedHashSet<>();
         for (String item : required("DUOWEI_ALLOWED_ORIGINS").split(",")) {
+            if (item.trim().isEmpty()) continue;
             URI uri = URI.create(item.trim());
             if (!"https".equals(uri.getScheme())
                     || uri.getHost() == null
@@ -66,7 +78,12 @@ public class AutomationConfiguration {
                     || uri.getFragment() != null
                     || !(uri.getPath().isEmpty() || "/".equals(uri.getPath())))
                 throw new IllegalStateException("允许来源必须为HTTPS origin");
-            result.add(uri.getScheme() + "://" + uri.getAuthority());
+            result.add(
+                    "https://"
+                            + uri.getHost().toLowerCase(Locale.ROOT)
+                            + (uri.getPort() == -1 || uri.getPort() == 443
+                                    ? ""
+                                    : ":" + uri.getPort()));
         }
         if (result.isEmpty()) throw new IllegalStateException("至少需要一个允许来源");
         return Collections.unmodifiableSet(result);

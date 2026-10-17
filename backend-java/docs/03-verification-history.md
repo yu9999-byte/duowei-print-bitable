@@ -126,3 +126,31 @@ OAuth Token恢复严格数字code=0校验，增加3个异常响应回归用例�
 ## 2026-10-17：模板存储对照
 
 对照原Registry Store与签名解析：保留写入字符串原值，scope精确验签，operation枚举不修剪。新增数据库写入参数回归测试及带空格operation拒绝断言。JDK8完整verify成功，127项中126项通过、1项PostgreSQL集成跳过，真实Chrome通过，格式及git diff --check通过。
+
+## 2026-10-17：两页与真实变量渲染
+
+失败测试定位为测试模板缺少style，Vue捕获zIndex访问异常导致空白页；补齐有效元素style后保留强断言通过。移除临时依赖补丁、headless入口和诊断，恢复原资源入口重新生成资源。JDK8执行spotless:apply clean verify退出0，127项中126项通过、1项PostgreSQL跳过；真实Chrome通过两页PDF、600×800第一页PNG及稳定字段变化导致像素变化的断言。git diff --check通过。
+
+## 2026-10-17：真实Chrome超时/重试
+
+增加挂起Promise页面，真实Chrome进入渲染后触发8秒测试超时，确认会话关闭；同artifactKey新建会话重试成功并关闭。此合成页面仅验证生命周期，内容渲染由独立两页模板验证。JDK8完整verify成功，128项中127项通过、1项数据库跳过，git diff --check通过。系统子进程残留仍未直接验证。
+
+## 2026-10-17：Chrome主进程清理缺陷
+
+新增tasklist精确PID断言复现会话已关闭但Chrome进程存活。清除中断直接quit仍可能排队等待挂起脚本。取消路径改为终止驱动goog:processID指向的自建浏览器，再释放会话并恢复中断；finally在中断时同样处理，active移除推迟到清理后。真实Windows超时及正常退出PID检查通过，同键重试成功；完整verify退出0，128项中127项通过、1项数据库跳过，git diff --check通过。所有后代进程及其他系统仍需验证。
+
+## 2026-10-17：配置数值与origin规范化
+
+Worker间隔补齐原Number支持的整数数值形式，来源列表跳过空项并规范域名大小写/默认443。新增7项用例；JDK8完整verify成功，135项中134项通过、1项数据库跳过，真实浏览器内容与进程检查通过，git diff --check通过。
+
+## 2026-10-17：商店令牌有效期转换
+
+修复expire=null/空值/布尔值与原Number转换不一致造成的错误缓存；保留通过非空校验后的原始token，截止时刻用double避免long溢出。新增11个缓存交换次数与原始token断言。JDK8完整verify成功，146项中145项通过、1项数据库跳过，真实浏览器2项通过，git diff --check通过。
+
+## 2026-10-17：桥接运行协议
+
+新增verify-bridge.mjs，逐字比较原后台实际生成脚本与Java资源，执行来源/窗口/版本、probe、同步与签名不泄露、错误脱敏、OAuth恢复、过期清理、不可信跳转拒绝。Node执行退出0，git diff --check通过。Java业务未修改，沿用最近146项中145项通过、1项数据库跳过的构建；独立脚本不计入Maven数量。
+
+## 2026-10-17：辅助脚本格式
+
+新增format-scripts.mjs与.editorconfig；统一全部.mjs格式并再次检查成功。重建协议向量/浏览器资源无内容差异，verify-bridge退出0，git diff --check通过。未修改Java业务，不重复运行已通过且输入不变的完整Maven验证，最近146项中145项通过、1项数据库跳过。

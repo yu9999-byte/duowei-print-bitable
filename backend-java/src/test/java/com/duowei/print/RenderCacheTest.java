@@ -10,6 +10,22 @@ import org.junit.jupiter.api.Test;
 
 class RenderCacheTest {
     @Test
+    void preservesRendererTimeoutForHttpStatusClassification() {
+        RenderService renderer = mock(RenderService.class);
+        ObjectNode body = Protocol.JSON.createObjectNode().put("artifactKey", "duowei:v1:timeout");
+        when(renderer.render(body)).thenThrow(new IllegalStateException("浏览器生成文件超时"));
+        RenderCache cache = new RenderCache(renderer);
+        try {
+            IllegalStateException failure =
+                    assertThrows(IllegalStateException.class, () -> cache.render(body));
+            assertEquals("浏览器生成文件超时", failure.getMessage());
+            assertNotNull(failure.getCause());
+        } finally {
+            cache.close();
+        }
+    }
+
+    @Test
     void concurrentRequestsShareOneRunningRender() throws Exception {
         RenderService renderer = mock(RenderService.class);
         ObjectNode body =

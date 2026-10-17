@@ -10,6 +10,58 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
 class MarketplaceTokenTest {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource(
+            delimiter = '|',
+            value = {
+                "null|2",
+                "true|2",
+                "false|2",
+                "\"\"|2",
+                "[]|2",
+                "[null]|2",
+                "\"7200\"|1",
+                "[7200]|1",
+                "{}|1",
+                "\"invalid\"|1",
+                "1e20|1"
+            })
+    void expiryCoercionMatchesOriginalAndPreservesToken(String expiry, int calls) throws Exception {
+        AppTicketRepository tickets = mock(AppTicketRepository.class);
+        FeishuClient api = mock(FeishuClient.class);
+        when(tickets.get("app")).thenReturn("ticket");
+        when(api.post(endsWith("/app_access_token"), any(), isNull()))
+                .thenReturn(
+                        Protocol.JSON.readTree(
+                                "{\"app_access_token\":\" app-token \",\"expire\":"
+                                        + expiry
+                                        + "}"));
+        when(api.post(endsWith("/tenant_access_token"), any(), isNull()))
+                .thenReturn(
+                        Protocol.JSON.readTree(
+                                "{\"tenant_access_token\":\" tenant-token \",\"expire\":"
+                                        + expiry
+                                        + "}"));
+        MarketplaceTokenProvider provider =
+                new MarketplaceTokenProvider("app", "secret", tickets, api, () -> 1000L);
+        assertEquals(" tenant-token ", provider.getTenantAccessToken("tenant"));
+        assertEquals(" tenant-token ", provider.getTenantAccessToken("tenant"));
+        verify(api, times(calls)).post(endsWith("/app_access_token"), any(), isNull());
+        verify(api, times(calls)).post(endsWith("/tenant_access_token"), any(), isNull());
+        verify(api, atLeastOnce())
+                .post(
+                        endsWith("/tenant_access_token"),
+                        argThat(
+                                body ->
+                                        " app-token "
+                                                .equals(
+                                                        ((com.fasterxml.jackson.databind.JsonNode)
+                                                                        body)
+                                                                .path("app_access_token")
+                                                                .asText())),
+                        isNull());
+    }
+
     @Test
     void exchangesTicketCachesTokensAndRefreshesBeforeExpiry() throws Exception {
         AppTicketRepository tickets = mock(AppTicketRepository.class);

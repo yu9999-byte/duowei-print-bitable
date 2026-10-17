@@ -26,11 +26,49 @@ public class RenderService {
 
     public void cancel(String artifactKey) {
         ChromeDriver driver = active.remove(artifactKey);
-        if (driver != null)
-            try {
+        if (driver != null) {
+            terminateBrowser(driver);
+            quitDriver(driver);
+        }
+    }
+
+    private void terminateBrowser(ChromeDriver driver) {
+        boolean interrupted = Thread.interrupted();
+        try {
+            Capabilities capabilities = driver.getCapabilities();
+            Object value =
+                    capabilities == null ? null : capabilities.getCapability("goog:processID");
+            if (!(value instanceof Number)) return;
+            long pid = ((Number) value).longValue();
+            if (pid <= 0) return;
+            // This PID belongs to the browser launched by this driver, never a user session.
+            Process process =
+                    System.getProperty("os.name").startsWith("Windows")
+                            ? new ProcessBuilder(
+                                            "taskkill.exe", "/PID", Long.toString(pid), "/T", "/F")
+                                    .start()
+                            : new ProcessBuilder("kill", "-TERM", Long.toString(pid)).start();
+            if (!process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) process.destroy();
+        } catch (Exception ignored) {
+            // The normal driver shutdown remains the fallback when process termination fails.
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
+        }
+    }
+
+    private void quitDriver(ChromeDriver driver) {
+        // A cancelled render thread is interrupted; WebDriver transport must be able to
+        // complete DELETE /session before stopping the driver service.
+        boolean interrupted = Thread.interrupted();
+        try {
+            synchronized (driver) {
                 driver.quit();
-            } catch (RuntimeException ignored) {
             }
+        } catch (RuntimeException ignored) {
+            // Cleanup must not replace the original rendering failure.
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
+        }
     }
 
     @javax.annotation.PreDestroy
@@ -137,12 +175,9 @@ public class RenderService {
                 throw new IllegalStateException("PNG产物无效");
             return artifact;
         } finally {
+            if (Thread.currentThread().isInterrupted()) terminateBrowser(driver);
+            quitDriver(driver);
             active.remove(body.path("artifactKey").asText(), driver);
-            try {
-                driver.quit();
-            } catch (RuntimeException ignored) {
-                // Cleanup must not replace the original rendering failure.
-            }
         }
     }
 
