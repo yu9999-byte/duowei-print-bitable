@@ -40,19 +40,22 @@ public class RenderRequestService {
         }
         JsonNode output = body.path("output");
         String type = output.path("type").isTextual() ? output.path("type").textValue() : "";
+        if (!"pdf".equals(type) && !"png".equals(type)) {
+            throw new IllegalArgumentException("自动化输出类型无效");
+        }
         if (!("pdf".equals(type) && output.path("pageLimit").isNull())
                 && !("png".equals(type)
                         && output.path("pageLimit").isNumber()
                         && output.path("pageLimit").doubleValue() == 1.0)) {
-            throw new IllegalArgumentException("自动化输出类型或页数无效");
+            throw new IllegalArgumentException("自动化输出页数无效");
         }
         Protocol.safeSnapshot(body.path("template").path("snapshot"));
         Protocol.safeSnapshot(body.path("values"));
         com.fasterxml.jackson.databind.node.ObjectNode result = Protocol.JSON.createObjectNode();
-        result.put("artifactKey", Protocol.required(body, "artifactKey"));
+        result.put("artifactKey", required(body, "artifactKey", "产物键"));
         com.fasterxml.jackson.databind.node.ObjectNode template = result.putObject("template");
-        template.put("id", Protocol.required(body.path("template"), "id"));
-        template.put("revision", Protocol.required(body.path("template"), "revision"));
+        template.put("id", required(body.path("template"), "id", "模板 ID"));
+        template.put("revision", required(body.path("template"), "revision", "模板修订"));
         template.set("snapshot", body.path("template").path("snapshot").deepCopy());
         result.set("values", body.path("values").deepCopy());
         com.fasterxml.jackson.databind.node.ObjectNode normalizedOutput =
@@ -61,5 +64,13 @@ public class RenderRequestService {
         if ("png".equals(type)) normalizedOutput.put("pageLimit", 1);
         else normalizedOutput.putNull("pageLimit");
         return result;
+    }
+
+    private static String required(JsonNode object, String field, String label) {
+        JsonNode value = object.path(field);
+        if (!value.isTextual() || value.textValue().trim().isEmpty()) {
+            throw new IllegalArgumentException(label + "不能为空");
+        }
+        return value.textValue().trim();
     }
 }

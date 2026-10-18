@@ -54,6 +54,10 @@ node backend-java/scripts/build-browser-resources.mjs
 
 ## 5. 验证与迁移状态
 
+下一步的双后台对照、真实数据库/飞书、文件效果及恢复验收顺序见[一致性验收计划](docs/05-acceptance-plan.md)。本机准备检查：`node backend-java/scripts/check-acceptance-env.mjs`；缺项返回退出码2，不打印凭据，也不执行外部请求。
+
+每轮证据归档、回顾台账及后续试运行回退步骤见[回顾与回退策略](docs/06-review-and-rollback.md)。归档保存在target内，执行clean前需转存受控位置。
+
 真实渲染测试已加强到两页文本和稳定字段变量。曾因测试模板缺少style导致失败，补齐有效模板后通过；定位证据见验证记录第2节。
 
 2026-10-17已用真实OpenJDK 8u452和Maven 3.9.9完成格式检查、编译、145项通过测试（共146项，1项数据库测试跳过）及打包，零失败、零错误；JAR在18081端口启动，健康接口返回成功，桥接页面HTTP 200。启动检查使用虚拟数据库地址，只证明应用启动和无数据库接口，未证明数据库业务链路。

@@ -1,0 +1,212 @@
+[
+  {
+    "id": "missing-signature",
+    "body": {
+      "artifactKey": "duowei:v1:contract",
+      "template": {
+        "id": "t",
+        "revision": "r1",
+        "snapshot": {
+          "pages": []
+        }
+      },
+      "values": {},
+      "output": {
+        "type": "pdf",
+        "pageLimit": null
+      }
+    },
+    "signature": "",
+    "expected": {
+      "status": 401,
+      "body": {
+        "success": false,
+        "stage": "authentication",
+        "code": "AUTH_REQUIRED",
+        "message": "渲染请求缺少服务身份签名"
+      }
+    }
+  },
+  {
+    "id": "missing-request-objects",
+    "body": {},
+    "signature": "test",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "stage": "request",
+        "code": "REQUEST_INVALID",
+        "message": "渲染请求无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-output-type",
+    "body": {
+      "artifactKey": "duowei:v1:contract",
+      "template": {
+        "id": "t",
+        "revision": "r1",
+        "snapshot": {
+          "pages": []
+        }
+      },
+      "values": {},
+      "output": {
+        "type": "jpg",
+        "pageLimit": null
+      }
+    },
+    "signature": "test",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "stage": "request",
+        "code": "REQUEST_INVALID",
+        "message": "自动化输出类型无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-pdf-page-limit",
+    "body": {
+      "artifactKey": "duowei:v1:contract",
+      "template": {
+        "id": "t",
+        "revision": "r1",
+        "snapshot": {
+          "pages": []
+        }
+      },
+      "values": {},
+      "output": {
+        "type": "pdf",
+        "pageLimit": 1
+      }
+    },
+    "signature": "test",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "stage": "request",
+        "code": "REQUEST_INVALID",
+        "message": "自动化输出页数无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-png-page-limit",
+    "body": {
+      "artifactKey": "duowei:v1:contract",
+      "template": {
+        "id": "t",
+        "revision": "r1",
+        "snapshot": {
+          "pages": []
+        }
+      },
+      "values": {},
+      "output": {
+        "type": "png",
+        "pageLimit": 2
+      }
+    },
+    "signature": "test",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "stage": "request",
+        "code": "REQUEST_INVALID",
+        "message": "自动化输出页数无效"
+      }
+    }
+  },
+  {
+    "id": "missing-artifact-key",
+    "body": {
+      "artifactKey": " ",
+      "template": {
+        "id": "t",
+        "revision": "r1",
+        "snapshot": {
+          "pages": []
+        }
+      },
+      "values": {},
+      "output": {
+        "type": "pdf",
+        "pageLimit": null
+      }
+    },
+    "signature": "test",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "stage": "request",
+        "code": "REQUEST_INVALID",
+        "message": "产物键不能为空"
+      }
+    }
+  },
+  {
+    "id": "missing-template-id",
+    "body": {
+      "artifactKey": "duowei:v1:contract",
+      "template": {
+        "id": "",
+        "revision": "r1",
+        "snapshot": {
+          "pages": []
+        }
+      },
+      "values": {},
+      "output": {
+        "type": "pdf",
+        "pageLimit": null
+      }
+    },
+    "signature": "test",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "stage": "request",
+        "code": "REQUEST_INVALID",
+        "message": "模板 ID不能为空"
+      }
+    }
+  },
+  {
+    "id": "missing-template-revision",
+    "body": {
+      "artifactKey": "duowei:v1:contract",
+      "template": {
+        "id": "t",
+        "revision": "",
+        "snapshot": {
+          "pages": []
+        }
+      },
+      "values": {},
+      "output": {
+        "type": "pdf",
+        "pageLimit": null
+      }
+    },
+    "signature": "test",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "stage": "request",
+        "code": "REQUEST_INVALID",
+        "message": "模板修订不能为空"
+      }
+    }
+  }
+]
