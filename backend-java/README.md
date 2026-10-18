@@ -68,6 +68,8 @@ node backend-java/scripts/build-browser-resources.mjs
 
 ## 6. 部署边界
 
+原系统界面是独立飞书记录视图插件，妙搭首页只是框架欢迎页。Java可选托管原插件构建用于预览；入口、配置与验收限制见[系统展示与连接](docs/07-system-display.md)。
+
 HTTPS代理负责TLS。OAuth会话和临时租户凭证在进程内存，当前限单实例；重启后需重新连接或触发自动化。Java需要独立运行环境，不直接复用NestJS托管命令。真实Chrome已导出两页PDF及第一页PNG，并验证变量值改变输出像素；复杂模板、真实飞书授权、PostgreSQL及附件回写尚需完整验收。本次不发布、不切换线上后台。
 
 HTTP路径及认证映射见[接口清单](docs/04-api-contracts.md)。
