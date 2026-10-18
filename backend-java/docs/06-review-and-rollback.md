@@ -14,13 +14,25 @@ SHA256用于检查文件是否变化，不是数字签名，也不能证明业�
 
 | 项目 | 状态 | 证据与后续 |
 | --- | --- | --- |
-| JDK8编译、单元及本地集成、打包 | PASS（限定本地范围） | 02-verification所列148项中147通过，PostgreSQL1项跳过；最后取消互斥另有定向复验 |
+| JDK8编译、单元及本地集成、打包 | PASS（限定本地范围） | 最新150项全部通过，零跳过；含PostgreSQL、强制中断恢复及真实Chrome，见02-verification第10节 |
 | 实际Chrome渲染/超时 | PASS（限定已测模板和Windows） | 两页文本PDF、第一页PNG、变量像素、主进程退出；复杂模板仍待验 |
-| PostgreSQL真实持久化 | BLOCKED | 未配置专用测试库；本机未发现PostgreSQL或容器工具 |
+| PostgreSQL真实持久化 | PASS（本机PostgreSQL16.15） | 自建仅监听127.0.0.1的随机端口临时实例，真实迁移、模板/任务/ticket及重连测试通过，测试schema清理后停止实例；非正式数据库证明 |
 | 原后台与Java真实接口对照 | NOT_RUN | 离线比较器已自测，不代表已采集双后台响应 |
 | 飞书真实业务、复杂打印、重启恢复 | NOT_RUN | 需要测试应用、脱敏业务模板和隔离环境 |
 
+### JVM中断恢复专项
+
+PostgresProcessRecoveryTest在独立JDK8子进程运行实际BackgroundService与真实Repository；任务进入渲染替身的阻塞点后，由父测试强制终止自己创建的子进程。数据库保持processing/attempt=1。启动第二个独立JVM，不注入临时租户凭证，验证一个观察窗口内没有渲染或飞书调用且attempt不变；通过实际submit路径重新提交签名与新测试凭证后恢复，同任务成功、attempt=2、file_token落库且任务总行数仍为1。测试上传替身只调用一次。测试清理仅针对自己的随机schema与子进程。
+
+此专项使用模拟飞书与模拟渲染，不证明真实文件、HTTP或外部副作用。它测试的是“上传之前中断”的恢复窗口，不能证明“上传之后、落库之前中断”不会重复上传；后一个窗口仍需专门演练。原BackgroundAutomationService同样使用内存临时凭证，恢复扫描必须tokens.has，重启后等待新凭证是现有规则，不能承诺无人触发便自动恢复。记录重启运维步骤时必须包含重新触发自动化/提交凭证及在途任务核对。
+
+第一轮数据库专项通过证据为`C:\codex-tmp\duowei-postgres-runs\0ad54810144341b1a712fdd5e7b090e1`及target/process-recovery下独立案例目录；包含两个子进程日志和检查点。之后增加状态回写序列断言（首次等待生成→生成中，恢复生成中→生成成功）并执行完整回归，结果以02-verification最新轮为准。
+
 2026-10-18补强PostgresIntegrationTest：在写入模板、ticket、成功任务以及queued/processing任务后销毁原物理连接，新建连接及Repository读取同一随机schema；断言模板、ticket、成功附件令牌、恢复任务状态/attempt/submission保留。该用例尚缺真实测试库执行结果；连接重建验证也不等于Java进程重启及Worker恢复验收。编译日志单独保存为`C:\codex-tmp\duowei-postgres-test-compile.log`，不得用原有测试数量冒充该新增分支已通过。
+
+后续实测更新：已执行上述用例及修订版本、ready过滤、跨租户隔离断言，1项执行、零跳过/失败/错误。证据目录`C:\codex-tmp\duowei-postgres-runs\8621bb9e82c3466eba4444036c00b8cb`包含maven.log、postgres-test.xml、启动/停止日志。数据库随机schema数量复核为0，实例已停止。数据库来自PostgreSQL官网链接的EDB Windows16.15二进制。初次下载误选Mac包，改为明确Windows链接fileid=1260623后按ZIP索引只提取bin/lib/share并校验每个文件CRC；该来源说明不等同于独立发布签名校验。两轮启动脚本曾被Windows子进程等待阻塞，均停止准确data路径对应实例后改用只等待pg_ctl父进程；失败轮保留，没有操作其他PostgreSQL实例。
+
+渲染协议实测更新：通过原renderer-service.ts实际HTTP handler生成8个无签名/非法参数错误夹具，与Java MockMvc实际Controller/RenderRequestService比较状态、完整JSON（仅去除顶层traceId）和trace关联。初测复现类型/页数及必填标签错误文案不同；修复Java后8例一致。日志`C:\codex-tmp\duowei-original-render-before.log`和`duowei-original-render-after.log`保留失败与复验。该证据覆盖原业务handler与Java控制器，不等于两个正式托管实例对照。
 
 ## 3. 后续试运行的回退设计
 

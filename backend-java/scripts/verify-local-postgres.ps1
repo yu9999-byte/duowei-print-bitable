@@ -28,8 +28,10 @@ try {
     & (Join-Path $PostgresBin 'initdb.exe') -D $dataRoot -U duowei_test_admin --encoding=UTF8 --locale=C --auth=scram-sha-256 --pwfile=$passwordFile *> (Join-Path $runRoot 'initdb.log')
     if ($LASTEXITCODE -ne 0) { throw 'initdb failed' }
     Remove-Item -LiteralPath $passwordFile
-    & (Join-Path $PostgresBin 'pg_ctl.exe') -D $dataRoot -l (Join-Path $runRoot 'postgres.log') -o "-h 127.0.0.1 -p $testPort" -w start *> (Join-Path $runRoot 'start.log')
-    if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL start failed' }
+    $startArguments = @('-D', ('"' + $dataRoot + '"'), '-l', ('"' + (Join-Path $runRoot 'postgres.log') + '"'), '-o', ('"-h 127.0.0.1 -p ' + $testPort + '"'), '-w', 'start')
+    $startProcess = Start-Process -FilePath (Join-Path $PostgresBin 'pg_ctl.exe') -ArgumentList $startArguments -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $runRoot 'start.log') -RedirectStandardError (Join-Path $runRoot 'start-error.log')
+    $startProcess.WaitForExit()
+    if ($startProcess.ExitCode -ne 0) { throw 'PostgreSQL start failed' }
     $started = $true
     $env:PGPASSWORD = $testPassword
     & (Join-Path $PostgresBin 'createdb.exe') -h 127.0.0.1 -p $testPort -U duowei_test_admin duowei_acceptance *> (Join-Path $runRoot 'createdb.log')
@@ -39,15 +41,19 @@ try {
     $env:DUOWEI_TEST_POSTGRES_USERNAME = 'duowei_test_admin'
     $env:DUOWEI_TEST_POSTGRES_PASSWORD = $testPassword
     $mavenArguments = @('-f', (Join-Path $backendRoot 'pom.xml'), '-B', 'spotless:apply', 'verify', '-q')
-    if (-not $FullSuite) { $mavenArguments += '-Dtest=PostgresIntegrationTest' }
+    if (-not $FullSuite) { $mavenArguments += '-Dtest=PostgresIntegrationTest,PostgresProcessRecoveryTest' }
     & $MavenCommand @mavenArguments *> (Join-Path $runRoot 'maven.log')
     if ($LASTEXITCODE -ne 0) { throw 'Maven verification failed' }
-    $report = Join-Path $backendRoot 'target\surefire-reports\TEST-com.duowei.print.PostgresIntegrationTest.xml'
-    Copy-Item -LiteralPath $report -Destination (Join-Path $runRoot 'postgres-test.xml')
-    [xml]$result = Get-Content -LiteralPath $report -Raw
-    if ([int]$result.testsuite.tests -lt 1 -or [int]$result.testsuite.skipped -ne 0 -or [int]$result.testsuite.errors -ne 0 -or [int]$result.testsuite.failures -ne 0) {
-        throw 'Database test did not execute successfully'
+    foreach ($testClass in @('PostgresIntegrationTest', 'PostgresProcessRecoveryTest')) {
+        $report = Join-Path $backendRoot ('target\surefire-reports\TEST-com.duowei.print.' + $testClass + '.xml')
+        Copy-Item -LiteralPath $report -Destination (Join-Path $runRoot ($testClass + '.xml'))
+        [xml]$result = Get-Content -LiteralPath $report -Raw
+        if ([int]$result.testsuite.tests -lt 1 -or [int]$result.testsuite.skipped -ne 0 -or [int]$result.testsuite.errors -ne 0 -or [int]$result.testsuite.failures -ne 0) {
+            throw "$testClass did not execute successfully"
+        }
     }
+    Copy-Item -LiteralPath (Join-Path $backendRoot 'target\surefire-reports') -Destination (Join-Path $runRoot 'surefire-reports') -Recurse
+    Copy-Item -LiteralPath (Join-Path $backendRoot 'target\process-recovery') -Destination (Join-Path $runRoot 'process-recovery') -Recurse
     $remainingSchemas = & (Join-Path $PostgresBin 'psql.exe') -h 127.0.0.1 -p $testPort -U duowei_test_admin -d duowei_acceptance -At -c "SELECT count(*) FROM information_schema.schemata WHERE schema_name LIKE 'duowei_test_%'"
     if ($LASTEXITCODE -ne 0 -or $remainingSchemas.Trim() -ne '0') { throw 'Test schema cleanup verification failed' }
     Write-Output 'PostgreSQL integration executed successfully; temporary test schemas cleaned.'

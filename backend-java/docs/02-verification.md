@@ -6,7 +6,7 @@
 
 - Zulu OpenJDK 1.8.0_452、Maven 3.9.9、Spring Boot 2.7.18。
 - 从仓库根执行：`mvn -f backend-java/pom.xml -B spotless:apply clean verify`；真实浏览器需下节的环境变量和驱动参数。
-- 最近完整结果：148项中147项通过、1项PostgreSQL集成测试因未配置测试库跳过；零失败、零错误，Java格式检查、编译和打包成功。随后对取消互斥调整单独复验RenderCacheTest及RenderTimeoutTest并重新打包，通过。
+- 最近完整结果：150项全部通过，零跳过、零失败、零错误；包含真实PostgreSQL16.15、JVM强制中断恢复及Chrome两项，JDK8格式检查、编译和打包成功。
 - JAR：`backend-java/target/print-backend-1.0.0.jar`。
 - 完整构建日志：`C:\codex-tmp\duowei-java-final-verify.log`，逐项报告：`backend-java/target/surefire-reports`。
 
@@ -44,7 +44,7 @@ PostgresIntegrationTest仅在`DUOWEI_TEST_POSTGRES_URL`显式配置时运行，�
 
 ## 5. 剩余验收与边界
 
-1. 授权隔离PostgreSQL执行、持久化往返与真实重启恢复。
+1. 本机PostgreSQL迁移/Repository/重连已通过；仍需真实Java进程重启Worker恢复及目标部署数据库版本验收。
 2. 飞书测试环境授权、字段分页、附件上传及记录回写。
 3. 复杂模板、图片/表格/字体、浏览器桥接窗口交互和所有子进程清理。
 4. 继续逐项审计原测试断言和托管外围适配；SPA托管与平台信息注入继续由原工程承担，Nest平台BusinessException全局外形尚未证明完全等价。
@@ -63,3 +63,15 @@ PostgresIntegrationTest仅在`DUOWEI_TEST_POSTGRES_URL`显式配置时运行，�
 ## 8. 共享任务超时复核
 
 原实现为每次新渲染创建一个Promise.race，所有同键请求共用截止时间。Java原先每次task.get都重新等待完整超时。现RenderTask记录单调时钟起点，后续等待仅使用剩余时间；已完成产物仍可命中缓存。新增测试先中断首个HTTP等待者，保留渲染任务，延迟加入第二个等待者，验证其按原截止时间超时、没有重启渲染并调用取消。完整verify通过148项中的147项（数据库1项跳过），包括真实Chrome两项。随后将移除旧任务、取消浏览器与新任务插入置于同一生命周期锁，避免旧任务取消误伤同键重试；针对缓存/超时测试再次执行verify并打包成功。完整日志与定向日志分别为duowei-java-final-verify.log、duowei-java-cache-verify.log。
+
+## 9. 自建隔离数据库与原后台响应对照
+
+2026-10-18通过verify-local-postgres.ps1创建随机独立目录/密码/端口的PostgreSQL16.15，仅监听127.0.0.1。实际执行两份迁移和模板版本/ready过滤/租户隔离、任务幂等/失败重试、ticket覆盖及销毁连接后重新读取的断言，确认无临时schema残留并停止实例。首次数据库单独测试通过后，与真实Chrome一起执行完整verify，149项全部通过，零跳过/失败/错误。完整日志、数据库XML、全套Surefire报告和停止日志位于`C:\codex-tmp\duowei-postgres-runs\ba2f8120a1f74f57a7d0c6cf7027ec04`。此证据不替代进程重启Worker或正式数据库兼容验收。
+
+OriginalRenderContractTest新增原renderer-service.ts实际HTTP handler生成的8个错误响应案例，对比Java控制器/请求Service状态、JSON及trace关联。初测发现类型/页数/必填标签文案不同，已修复并复验通过。只忽略随机traceId，仍验证同侧响应头关联。生成命令为`node backend-java/scripts/generate-render-contracts.mjs`。不依赖真实飞书，不代表原托管平台代理层已验收。
+
+## 10. JVM强制中断与Worker恢复
+
+2026-10-18新增PostgresProcessRecoveryTest：子JVM实际Worker将任务推进processing/attempt=1，阻塞于渲染替身后强制终止；第二个独立JVM启动后无凭证不调用飞书/渲染、attempt不变，重新通过submit注入有效签名及测试临时凭证后成功。数据库同任务仅1行，attempt=2、file_token持久化；测试上传仅1次，状态序列首次等待生成→生成中、恢复生成中→生成成功。该凭证等待规则与原BackgroundAutomationService一致。
+
+完整verify为150项全通过，无跳过/失败/错误，含真实Chrome。证据目录`C:\codex-tmp\duowei-postgres-runs\5008f78acf57402fa6a64f2db1a034b9`包含全套Surefire、process-recovery子JVM日志和检查点、数据库启动/停止日志；schema清理和实例停止通过。飞书和渲染在本专项使用测试替身，不等于真实外部业务恢复；尚未验证上传完成后、成功落库前崩溃窗口的副作用，不能承诺任意时点恰好一次上传。详情见06回顾台账。

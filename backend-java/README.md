@@ -58,9 +58,11 @@ node backend-java/scripts/build-browser-resources.mjs
 
 每轮证据归档、回顾台账及后续试运行回退步骤见[回顾与回退策略](docs/06-review-and-rollback.md)。归档保存在target内，执行clean前需转存受控位置。
 
+本机PostgreSQL隔离验收脚本为`scripts/verify-local-postgres.ps1`，已执行真实迁移及Repository重连测试。原渲染handler错误响应夹具由`scripts/generate-render-contracts.mjs`生成，Java的OriginalRenderContractTest逐例对照；结果与边界见验证记录和回顾台账。
+
 真实渲染测试已加强到两页文本和稳定字段变量。曾因测试模板缺少style导致失败，补齐有效模板后通过；定位证据见验证记录第2节。
 
-2026-10-17已用真实OpenJDK 8u452和Maven 3.9.9完成格式检查、编译、145项通过测试（共146项，1项数据库测试跳过）及打包，零失败、零错误；JAR在18081端口启动，健康接口返回成功，桥接页面HTTP 200。启动检查使用虚拟数据库地址，只证明应用启动和无数据库接口，未证明数据库业务链路。
+2026-10-18已用真实OpenJDK 8u452和Maven 3.9.9完成格式检查、编译、149项全部通过测试及打包，零跳过、零失败、零错误，包含本机PostgreSQL16.15真实迁移/Repository重连和Chrome渲染测试。测试实例停止及临时schema清理已确认。真实飞书、复杂业务模板与进程重启恢复仍待验收。
 
 功能映射见[迁移对照](docs/01-migration-matrix.md)，当前验收见[验证记录](docs/02-verification.md)，历次证据见[验证历史](docs/03-verification-history.md)。功能兼容核对仍在进行，不能将当前构建通过视为迁移全部完成。
 
