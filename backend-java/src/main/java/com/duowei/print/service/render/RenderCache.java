@@ -10,12 +10,19 @@ import org.springframework.stereotype.Service;
 @Service
 public class RenderCache {
     private final RenderService renderer;
-    private final ConcurrentMap<String, FutureTask<RenderService.Artifact>> cache =
-            new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, RenderTask> cache = new ConcurrentHashMap<>();
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final long timeoutMillis;
     private final Object lifecycle = new Object();
     private boolean closed;
+
+    private static final class RenderTask extends FutureTask<RenderService.Artifact> {
+        private final long started = System.nanoTime();
+
+        private RenderTask(Callable<RenderService.Artifact> render) {
+            super(render);
+        }
+    }
 
     @org.springframework.beans.factory.annotation.Autowired
     public RenderCache(RenderService renderer) {
@@ -30,9 +37,8 @@ public class RenderCache {
 
     public RenderService.Artifact render(JsonNode body) {
         String key = Protocol.required(body, "artifactKey");
-        FutureTask<RenderService.Artifact> candidate =
-                new FutureTask<>(() -> renderer.render(body));
-        FutureTask<RenderService.Artifact> task;
+        RenderTask candidate = new RenderTask(() -> renderer.render(body));
+        RenderTask task;
         synchronized (lifecycle) {
             if (closed) throw new IllegalStateException("渲染服务已关闭");
             task = cache.putIfAbsent(key, candidate);
@@ -48,14 +54,20 @@ public class RenderCache {
             }
         }
         try {
-            return task.get(timeoutMillis, TimeUnit.MILLISECONDS);
+            long remaining =
+                    TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+                            - (System.nanoTime() - task.started);
+            return task.get(Math.max(0, remaining), TimeUnit.NANOSECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("生成文件已取消", e);
         } catch (TimeoutException e) {
-            cache.remove(key, task);
-            task.cancel(true);
-            renderer.cancel(key);
+            synchronized (lifecycle) {
+                if (cache.remove(key, task)) {
+                    task.cancel(true);
+                    renderer.cancel(key);
+                }
+            }
             throw new IllegalStateException("生成文件超时，请稍后重试", e);
         } catch (CancellationException e) {
             cache.remove(key, task);

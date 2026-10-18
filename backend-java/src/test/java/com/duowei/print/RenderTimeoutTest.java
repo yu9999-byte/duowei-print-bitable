@@ -13,6 +13,51 @@ import org.junit.jupiter.api.Test;
 
 class RenderTimeoutTest {
     @Test
+    void laterWaiterUsesOriginalTaskDeadlineAfterFirstCallerDisconnects() throws Exception {
+        RenderService renderer = mock(RenderService.class);
+        ObjectNode body =
+                Protocol.JSON.createObjectNode().put("artifactKey", "duowei:v1:shared-deadline");
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch callerExited = new CountDownLatch(1);
+        when(renderer.render(body))
+                .thenAnswer(
+                        invocation -> {
+                            started.countDown();
+                            new CountDownLatch(1).await();
+                            throw new AssertionError("unreachable");
+                        });
+        RenderCache cache = new RenderCache(renderer, 2000);
+        Thread first =
+                new Thread(
+                        () -> {
+                            try {
+                                cache.render(body);
+                            } catch (IllegalStateException expected) {
+                                callerExited.countDown();
+                            }
+                        });
+        try {
+            first.start();
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            first.interrupt();
+            assertTrue(callerExited.await(5, TimeUnit.SECONDS));
+            Thread.sleep(1400);
+            long joined = System.nanoTime();
+            IllegalStateException failure =
+                    assertThrows(IllegalStateException.class, () -> cache.render(body));
+            long waited = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - joined);
+            assertTrue(failure.getMessage().contains("超时"));
+            assertTrue(waited < 1300, "late waiter restarted timeout: " + waited);
+            verify(renderer, times(1)).render(body);
+            verify(renderer).cancel("duowei:v1:shared-deadline");
+        } finally {
+            first.interrupt();
+            first.join(5000);
+            cache.close();
+        }
+    }
+
+    @Test
     void closedServiceRejectsRequestsWithoutLeavingPendingCacheEntries() {
         RenderService renderer = mock(RenderService.class);
         RenderCache cache = new RenderCache(renderer);

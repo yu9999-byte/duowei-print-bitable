@@ -1,12 +1,12 @@
 # 验证记录
 
-更新日期：2026-10-17（北京时间）。Goal仍在进行，完整迁移验收尚未完成。历史故障和修复见[验证历史](03-verification-history.md)。
+更新日期：2026-10-18（北京时间）。Goal仍在进行，完整迁移验收尚未完成。历史故障和修复见[验证历史](03-verification-history.md)。
 
 ## 1. 构建基线
 
 - Zulu OpenJDK 1.8.0_452、Maven 3.9.9、Spring Boot 2.7.18。
 - 从仓库根执行：`mvn -f backend-java/pom.xml -B spotless:apply clean verify`；真实浏览器需下节的环境变量和驱动参数。
-- 最近完整结果：147项中146项通过、1项PostgreSQL集成测试因未配置测试库跳过；零失败、零错误，Java格式检查、编译和打包成功。
+- 最近完整结果：148项中147项通过、1项PostgreSQL集成测试因未配置测试库跳过；零失败、零错误，Java格式检查、编译和打包成功。随后对取消互斥调整单独复验RenderCacheTest及RenderTimeoutTest并重新打包，通过。
 - JAR：`backend-java/target/print-backend-1.0.0.jar`。
 - 完整构建日志：`C:\codex-tmp\duowei-java-final-verify.log`，逐项报告：`backend-java/target/surefire-reports`。
 
@@ -59,3 +59,7 @@ PostgresIntegrationTest仅在`DUOWEI_TEST_POSTGRES_URL`显式配置时运行，�
 ## 7. 渲染错误分类复核
 
 原renderer-service直接使用渲染异常消息判断超时并返回504。Java RenderCache原先将执行异常统一包装为“生成文件失败”，会丢失渲染器自身的超时消息而返回502。现保留非空原异常消息，控制器继续统一脱敏；无消息异常仍返回通用错误。RenderCacheTest增加超时消息及原因保留断言。修复后再次执行JDK8完整verify：147项中146项通过，1项数据库测试跳过，真实Chrome两项通过，格式检查和JAR打包成功。脚本格式检查及桥接VM验证亦通过。
+
+## 8. 共享任务超时复核
+
+原实现为每次新渲染创建一个Promise.race，所有同键请求共用截止时间。Java原先每次task.get都重新等待完整超时。现RenderTask记录单调时钟起点，后续等待仅使用剩余时间；已完成产物仍可命中缓存。新增测试先中断首个HTTP等待者，保留渲染任务，延迟加入第二个等待者，验证其按原截止时间超时、没有重启渲染并调用取消。完整verify通过148项中的147项（数据库1项跳过），包括真实Chrome两项。随后将移除旧任务、取消浏览器与新任务插入置于同一生命周期锁，避免旧任务取消误伤同键重试；针对缓存/超时测试再次执行verify并打包成功。完整日志与定向日志分别为duowei-java-final-verify.log、duowei-java-cache-verify.log。
