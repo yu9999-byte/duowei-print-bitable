@@ -54,9 +54,14 @@ public class RegistryController {
 
     @ExceptionHandler({SecurityException.class, IllegalArgumentException.class})
     public ResponseEntity<?> error(RuntimeException e) {
+        boolean authentication =
+                e instanceof SecurityException
+                        || java.util.regex.Pattern.compile("身份|签名|过期|写入权限|作用域")
+                                .matcher(String.valueOf(e.getMessage()))
+                                .find();
         return failure(
-                e instanceof SecurityException ? 401 : 400,
-                e instanceof SecurityException ? "AUTH_INVALID" : "TEMPLATE_INVALID",
+                authentication ? 401 : 400,
+                authentication ? "AUTH_INVALID" : "TEMPLATE_INVALID",
                 e.getMessage());
     }
 

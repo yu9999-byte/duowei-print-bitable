@@ -52,11 +52,12 @@ public class AutomationController {
             @RequestHeader(value = "x-duowei-service-signature", defaultValue = "")
                     String signature,
             @RequestHeader(value = "x-duowei-tenant-access-token", defaultValue = "") String token,
-            @RequestBody ObjectNode body) {
+            @RequestBody JsonNode body) {
         if (token.trim().length() < 20)
             return jobFailure(400, "TENANT_TOKEN_REQUIRED", "后台任务缺少当前自动化的临时租户凭证");
         try {
-            return background.submit(signature, token, body);
+            if (body == null || !body.isObject()) throw new IllegalArgumentException("后台任务请求必须是对象");
+            return background.submit(signature, token, (ObjectNode) body);
         } catch (SecurityException error) {
             return jobFailure(401, "AUTH_INVALID", error.getMessage());
         } catch (IllegalArgumentException error) {

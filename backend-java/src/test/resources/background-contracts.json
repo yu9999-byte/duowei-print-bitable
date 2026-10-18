@@ -1,0 +1,778 @@
+[
+  {
+    "id": "empty",
+    "body": {},
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "后台任务版本无效"
+      }
+    }
+  },
+  {
+    "id": "null-body",
+    "body": null,
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "后台任务请求必须是对象"
+      }
+    }
+  },
+  {
+    "id": "array-body",
+    "body": [],
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "后台任务请求必须是对象"
+      }
+    }
+  },
+  {
+    "id": "number-body",
+    "body": 42,
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "后台任务请求必须是对象"
+      }
+    }
+  },
+  {
+    "id": "invalid-4",
+    "body": {
+      "version": 2,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "后台任务版本无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-5",
+    "body": {
+      "version": 1,
+      "taskKey": "wrong",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "后台任务键格式无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-6",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "other",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "后台任务输出格式无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-7",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "租户不能为空"
+      }
+    }
+  },
+  {
+    "id": "invalid-8",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "多维表格不能为空"
+      }
+    }
+  },
+  {
+    "id": "invalid-9",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "数据表不能为空"
+      }
+    }
+  },
+  {
+    "id": "invalid-10",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "当前记录不能为空"
+      }
+    }
+  },
+  {
+    "id": "invalid-11",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": null
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "后台任务字段配置无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-12",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {}
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "附件字段不能为空"
+      }
+    }
+  },
+  {
+    "id": "invalid-13",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a"
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "状态字段不能为空"
+      }
+    }
+  },
+  {
+    "id": "invalid-14",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "a"
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "后台模式的附件、状态和错误字段不能重复"
+      }
+    }
+  },
+  {
+    "id": "invalid-15",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      },
+      "extra": true
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "后台任务请求包含不支持的属性"
+      }
+    }
+  },
+  {
+    "id": "invalid-16",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "wrong",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "后台任务产物键无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-17",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "png"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "JOB_INVALID",
+        "message": "后台任务输出格式与渲染请求不一致"
+      }
+    }
+  },
+  {
+    "id": "missing-signature",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "expected": {
+      "status": 401,
+      "body": {
+        "success": false,
+        "code": "AUTH_INVALID",
+        "message": "后台任务签名无效"
+      }
+    }
+  },
+  {
+    "id": "bad-signature",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "signature": "test",
+    "expected": {
+      "status": 401,
+      "body": {
+        "success": false,
+        "code": "AUTH_INVALID",
+        "message": "后台任务签名无效"
+      }
+    }
+  },
+  {
+    "id": "expired",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "signature": "duowei-background-job-v1.eyJhdWRpZW5jZSI6ImR1b3dlaS1iYWNrZ3JvdW5kLWpvYiIsImJvZHlEaWdlc3QiOiJXNFZ1Z28wTTQ5RURwMXZSNV90NjVUNF9yTm4xYmh1NVdkQ2E0b192R29ZIiwiZXhwaXJlc0F0IjoxLCJpc3N1ZWRBdCI6MSwibm9uY2UiOiJ0ZXN0IiwidGFza0tleSI6ImR1b3dlaS1qb2I6djE6YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZlcnNpb24iOjF9.dFodRxE_yloHJdSNgC8hqofTmBP-jvGgJmnfcXIMy5w",
+    "expected": {
+      "status": 401,
+      "body": {
+        "success": false,
+        "code": "AUTH_INVALID",
+        "message": "后台任务签名已过期"
+      }
+    }
+  },
+  {
+    "id": "wrong-task",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "signature": "duowei-background-job-v1.eyJhdWRpZW5jZSI6ImR1b3dlaS1iYWNrZ3JvdW5kLWpvYiIsImJvZHlEaWdlc3QiOiJXNFZ1Z28wTTQ5RURwMXZSNV90NjVUNF9yTm4xYmh1NVdkQ2E0b192R29ZIiwiZXhwaXJlc0F0Ijo0MTAyNDQ0ODAwMDAwLCJpc3N1ZWRBdCI6MSwibm9uY2UiOiJ0ZXN0IiwidGFza0tleSI6ImRpZmZlcmVudCIsInZlcnNpb24iOjF9.f9rvQvl87iGq4CB0fkk-Zrut69KYb2DsSP-PSxySUAU",
+    "expected": {
+      "status": 401,
+      "body": {
+        "success": false,
+        "code": "AUTH_INVALID",
+        "message": "后台任务键与签名不一致"
+      }
+    }
+  },
+  {
+    "id": "wrong-body",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "signature": "duowei-background-job-v1.eyJhdWRpZW5jZSI6ImR1b3dlaS1iYWNrZ3JvdW5kLWpvYiIsImJvZHlEaWdlc3QiOiJkaWZmZXJlbnQiLCJleHBpcmVzQXQiOjQxMDI0NDQ4MDAwMDAsImlzc3VlZEF0IjoxLCJub25jZSI6InRlc3QiLCJ0YXNrS2V5IjoiZHVvd2VpLWpvYjp2MTphYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwidmVyc2lvbiI6MX0.sKD5RGS4tnFrSxnENKyIgRcL8_5JoyraLCvs7UXinNM",
+    "expected": {
+      "status": 401,
+      "body": {
+        "success": false,
+        "code": "AUTH_INVALID",
+        "message": "后台任务内容与签名不一致"
+      }
+    }
+  },
+  {
+    "id": "valid-new",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "signature": "duowei-background-job-v1.eyJhdWRpZW5jZSI6ImR1b3dlaS1iYWNrZ3JvdW5kLWpvYiIsImJvZHlEaWdlc3QiOiJXNFZ1Z28wTTQ5RURwMXZSNV90NjVUNF9yTm4xYmh1NVdkQ2E0b192R29ZIiwiZXhwaXJlc0F0Ijo0MTAyNDQ0ODAwMDAwLCJpc3N1ZWRBdCI6MSwibm9uY2UiOiJ0ZXN0IiwidGFza0tleSI6ImR1b3dlaS1qb2I6djE6YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZlcnNpb24iOjF9.HoPu0taItcaSKmnN0hEQ_8SDRSDOMXGAV5H_jvYEZGY",
+    "existingStatus": null,
+    "expected": {
+      "status": 202,
+      "body": {
+        "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "queued",
+        "reused": false
+      }
+    }
+  },
+  {
+    "id": "valid-queued",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "signature": "duowei-background-job-v1.eyJhdWRpZW5jZSI6ImR1b3dlaS1iYWNrZ3JvdW5kLWpvYiIsImJvZHlEaWdlc3QiOiJXNFZ1Z28wTTQ5RURwMXZSNV90NjVUNF9yTm4xYmh1NVdkQ2E0b192R29ZIiwiZXhwaXJlc0F0Ijo0MTAyNDQ0ODAwMDAwLCJpc3N1ZWRBdCI6MSwibm9uY2UiOiJ0ZXN0IiwidGFza0tleSI6ImR1b3dlaS1qb2I6djE6YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZlcnNpb24iOjF9.HoPu0taItcaSKmnN0hEQ_8SDRSDOMXGAV5H_jvYEZGY",
+    "existingStatus": "queued",
+    "expected": {
+      "status": 200,
+      "body": {
+        "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "queued",
+        "reused": true
+      }
+    }
+  },
+  {
+    "id": "valid-processing",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "signature": "duowei-background-job-v1.eyJhdWRpZW5jZSI6ImR1b3dlaS1iYWNrZ3JvdW5kLWpvYiIsImJvZHlEaWdlc3QiOiJXNFZ1Z28wTTQ5RURwMXZSNV90NjVUNF9yTm4xYmh1NVdkQ2E0b192R29ZIiwiZXhwaXJlc0F0Ijo0MTAyNDQ0ODAwMDAwLCJpc3N1ZWRBdCI6MSwibm9uY2UiOiJ0ZXN0IiwidGFza0tleSI6ImR1b3dlaS1qb2I6djE6YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZlcnNpb24iOjF9.HoPu0taItcaSKmnN0hEQ_8SDRSDOMXGAV5H_jvYEZGY",
+    "existingStatus": "processing",
+    "expected": {
+      "status": 200,
+      "body": {
+        "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "processing",
+        "reused": true
+      }
+    }
+  },
+  {
+    "id": "valid-succeeded",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "signature": "duowei-background-job-v1.eyJhdWRpZW5jZSI6ImR1b3dlaS1iYWNrZ3JvdW5kLWpvYiIsImJvZHlEaWdlc3QiOiJXNFZ1Z28wTTQ5RURwMXZSNV90NjVUNF9yTm4xYmh1NVdkQ2E0b192R29ZIiwiZXhwaXJlc0F0Ijo0MTAyNDQ0ODAwMDAwLCJpc3N1ZWRBdCI6MSwibm9uY2UiOiJ0ZXN0IiwidGFza0tleSI6ImR1b3dlaS1qb2I6djE6YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZlcnNpb24iOjF9.HoPu0taItcaSKmnN0hEQ_8SDRSDOMXGAV5H_jvYEZGY",
+    "existingStatus": "succeeded",
+    "expected": {
+      "status": 200,
+      "body": {
+        "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "succeeded",
+        "reused": true
+      }
+    }
+  },
+  {
+    "id": "valid-failed",
+    "body": {
+      "version": 1,
+      "taskKey": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tenantKey": "tenant",
+      "baseToken": "base",
+      "tableId": "table",
+      "recordId": "record",
+      "outputType": "pdf",
+      "renderRequest": {
+        "artifactKey": "duowei:v1:test",
+        "output": {
+          "type": "pdf"
+        }
+      },
+      "targets": {
+        "attachmentFieldId": "a",
+        "statusFieldId": "s"
+      }
+    },
+    "signature": "duowei-background-job-v1.eyJhdWRpZW5jZSI6ImR1b3dlaS1iYWNrZ3JvdW5kLWpvYiIsImJvZHlEaWdlc3QiOiJXNFZ1Z28wTTQ5RURwMXZSNV90NjVUNF9yTm4xYmh1NVdkQ2E0b192R29ZIiwiZXhwaXJlc0F0Ijo0MTAyNDQ0ODAwMDAwLCJpc3N1ZWRBdCI6MSwibm9uY2UiOiJ0ZXN0IiwidGFza0tleSI6ImR1b3dlaS1qb2I6djE6YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZlcnNpb24iOjF9.HoPu0taItcaSKmnN0hEQ_8SDRSDOMXGAV5H_jvYEZGY",
+    "existingStatus": "failed",
+    "expected": {
+      "status": 200,
+      "body": {
+        "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "queued",
+        "reused": true
+      }
+    }
+  }
+]

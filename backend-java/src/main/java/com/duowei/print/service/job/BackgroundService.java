@@ -55,14 +55,10 @@ public class BackgroundService {
         if (token.trim().length() < 20) throw new IllegalArgumentException("后台任务缺少临时租户凭证");
         body = normalizeSubmission(body);
         String key = body.path("taskKey").asText();
-        JsonNode claims =
-                Protocol.verify(
-                        signature,
-                        "duowei-background-job-v1",
-                        "duowei-background-job",
-                        body,
-                        configuration.signingSecret("DUOWEI_BACKGROUND_JOB_SIGNING_SECRET_HEX"));
-        if (!key.equals(claims.path("taskKey").asText())) throw new SecurityException("任务键签名不一致");
+        Protocol.verifyBackground(
+                signature,
+                body,
+                configuration.signingSecret("DUOWEI_BACKGROUND_JOB_SIGNING_SECRET_HEX"));
         boolean existing = jobs.exists(key);
         jobs.createOrRetry(key, body.toString());
         String tenant = body.path("tenantKey").asText();
@@ -86,40 +82,15 @@ public class BackgroundService {
                 .body(result);
     }
 
+    private static String requiredJob(JsonNode node, String field, String label) {
+        if (!node.path(field).isTextual()
+                || Protocol.trimJavaScript(node.path(field).textValue()).isEmpty())
+            throw new IllegalArgumentException(label + "不能为空");
+        return Protocol.trimJavaScript(node.path(field).textValue());
+    }
+
     public static ObjectNode normalizeSubmission(ObjectNode body) {
-        body = body.deepCopy();
-        String key = Protocol.required(body, "taskKey");
-        body.put("taskKey", key);
-        if (!key.matches("duowei-job:v1:[0-9a-f]{64}")
-                || !body.path("version").isNumber()
-                || body.path("version").doubleValue() != 1.0)
-            throw new IllegalArgumentException("后台任务键或版本无效");
-        for (String f : Arrays.asList("tenantKey", "baseToken", "tableId", "recordId"))
-            body.put(f, Protocol.required(body, f));
-        if (!Arrays.asList("pdf", "png").contains(body.path("outputType").asText())
-                || !body.path("outputType")
-                        .equals(body.path("renderRequest").path("output").path("type"))
-                || !body.path("renderRequest")
-                        .path("artifactKey")
-                        .asText()
-                        .startsWith("duowei:v1:")) throw new IllegalArgumentException("后台任务渲染请求无效");
-        JsonNode targets = body.path("targets");
-        String attachment = Protocol.required(targets, "attachmentFieldId"),
-                status = Protocol.required(targets, "statusFieldId"),
-                error =
-                        targets.path("errorFieldId").isTextual()
-                                ? targets.path("errorFieldId").asText().trim()
-                                : "";
-        if (attachment.equals(status)
-                || !error.isEmpty() && (error.equals(attachment) || error.equals(status)))
-            throw new IllegalArgumentException("后台任务字段不能重复");
-        ObjectNode normalizedTargets = Protocol.JSON.createObjectNode();
-        normalizedTargets.put("attachmentFieldId", attachment);
-        normalizedTargets.put("statusFieldId", status);
-        body.set("targets", normalizedTargets);
-        targets = normalizedTargets;
-        if (!error.isEmpty()) ((ObjectNode) targets).put("errorFieldId", error);
-        else ((ObjectNode) targets).remove("errorFieldId");
+        if (body == null) throw new IllegalArgumentException("后台任务请求必须是对象");
         Set<String> allowed =
                 new HashSet<>(
                         Arrays.asList(
@@ -133,10 +104,46 @@ public class BackgroundService {
                                 "renderRequest",
                                 "targets"));
         Iterator<String> names = body.fieldNames();
-        while (names.hasNext()) {
-            if (!allowed.contains(names.next())) throw new IllegalArgumentException("任务包含不支持的属性");
-        }
-        return body;
+        while (names.hasNext())
+            if (!allowed.contains(names.next()))
+                throw new IllegalArgumentException("后台任务请求包含不支持的属性");
+        if (!body.path("version").isNumber() || body.path("version").doubleValue() != 1.0)
+            throw new IllegalArgumentException("后台任务版本无效");
+        String key = requiredJob(body, "taskKey", "后台任务键");
+        if (!key.matches("duowei-job:v1:[0-9a-f]{64}"))
+            throw new IllegalArgumentException("后台任务键格式无效");
+        String output = body.path("outputType").asText();
+        if (!body.path("outputType").isTextual() || !Arrays.asList("pdf", "png").contains(output))
+            throw new IllegalArgumentException("后台任务输出格式无效");
+        JsonNode render = body.path("renderRequest");
+        if (!body.path("outputType").equals(render.path("output").path("type")))
+            throw new IllegalArgumentException("后台任务输出格式与渲染请求不一致");
+        if (!render.path("artifactKey").isTextual()
+                || !render.path("artifactKey").asText().startsWith("duowei:v1:"))
+            throw new IllegalArgumentException("后台任务产物键无效");
+        ObjectNode result = Protocol.JSON.createObjectNode();
+        result.put("version", 1).put("taskKey", key);
+        String[] fields = {"tenantKey", "baseToken", "tableId", "recordId"};
+        String[] labels = {"租户", "多维表格", "数据表", "当前记录"};
+        for (int i = 0; i < fields.length; i++)
+            result.put(fields[i], requiredJob(body, fields[i], labels[i]));
+        result.put("outputType", output);
+        result.set("renderRequest", render.deepCopy());
+        JsonNode targets = body.path("targets");
+        if (!targets.isObject()) throw new IllegalArgumentException("后台任务字段配置无效");
+        String attachment = requiredJob(targets, "attachmentFieldId", "附件字段");
+        String status = requiredJob(targets, "statusFieldId", "状态字段");
+        String error =
+                targets.path("errorFieldId").isTextual()
+                        ? Protocol.trimJavaScript(targets.path("errorFieldId").textValue())
+                        : "";
+        if (attachment.equals(status)
+                || !error.isEmpty() && (error.equals(attachment) || error.equals(status)))
+            throw new IllegalArgumentException("后台模式的附件、状态和错误字段不能重复");
+        ObjectNode normalizedTargets = result.putObject("targets");
+        normalizedTargets.put("attachmentFieldId", attachment).put("statusFieldId", status);
+        if (!error.isEmpty()) normalizedTargets.put("errorFieldId", error);
+        return result;
     }
 
     private void drain() {

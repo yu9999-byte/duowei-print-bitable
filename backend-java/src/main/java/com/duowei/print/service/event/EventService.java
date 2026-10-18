@@ -1,6 +1,5 @@
 package com.duowei.print.service.event;
 
-import com.duowei.print.security.Protocol;
 import com.fasterxml.jackson.databind.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -41,14 +40,19 @@ public class EventService {
                     Collections.singletonMap("challenge", body.path("challenge").textValue()));
         JsonNode event = body.path("event");
         if ("app_ticket".equals(event.path("type").asText())) {
+            String ticket =
+                    event.path("app_ticket").isTextual()
+                            ? com.duowei.print.security.Protocol.trimJavaScript(
+                                    event.path("app_ticket").textValue())
+                            : "";
             if (!configuration
                             .required("DUOWEI_FEISHU_APP_ID")
                             .equals(event.path("app_id").asText())
                     || !event.path("app_ticket").isTextual()
-                    || event.path("app_ticket").asText().trim().isEmpty())
+                    || ticket.isEmpty())
                 return ResponseEntity.badRequest()
                         .body(Collections.singletonMap("code", "APP_TICKET_INVALID"));
-            tickets.save(event.path("app_id").asText(), Protocol.required(event, "app_ticket"));
+            tickets.save(event.path("app_id").asText(), ticket);
         }
         return ResponseEntity.ok(Collections.singletonMap("code", 0));
     }

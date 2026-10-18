@@ -1,0 +1,197 @@
+[
+  {
+    "id": "missing-signature",
+    "body": {},
+    "signature": "",
+    "expected": {
+      "status": 401,
+      "body": {
+        "success": false,
+        "code": "AUTH_REQUIRED",
+        "message": "模板注册表请求缺少身份签名"
+      }
+    }
+  },
+  {
+    "id": "read-missing-scope",
+    "body": {
+      "operation": "list"
+    },
+    "signature": "test",
+    "expected": {
+      "status": 401,
+      "body": {
+        "success": false,
+        "code": "AUTH_INVALID",
+        "message": "模板注册表读取作用域无效"
+      }
+    }
+  },
+  {
+    "id": "read-array-scope",
+    "body": {
+      "operation": "list",
+      "scope": []
+    },
+    "signature": "test",
+    "expected": {
+      "status": 401,
+      "body": {
+        "success": false,
+        "code": "AUTH_INVALID",
+        "message": "模板注册表读取作用域无效"
+      }
+    }
+  },
+  {
+    "id": "read-empty-tenant",
+    "body": {
+      "operation": "list",
+      "scope": {
+        "tenantKey": " ",
+        "baseToken": "base",
+        "tableId": "table"
+      }
+    },
+    "signature": "test",
+    "expected": {
+      "status": 401,
+      "body": {
+        "success": false,
+        "code": "AUTH_INVALID",
+        "message": "模板注册表读取作用域无效"
+      }
+    }
+  },
+  {
+    "id": "unknown-operation",
+    "body": {
+      "operation": "other",
+      "scope": {
+        "tenantKey": "tenant",
+        "baseToken": "base",
+        "tableId": "table"
+      }
+    },
+    "signature": "test",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "TEMPLATE_INVALID",
+        "message": "模板注册表读取操作无效"
+      }
+    }
+  },
+  {
+    "id": "get-missing-selection",
+    "body": {
+      "operation": "get",
+      "scope": {
+        "tenantKey": "tenant",
+        "baseToken": "base",
+        "tableId": "table"
+      }
+    },
+    "signature": "test",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "TEMPLATE_INVALID",
+        "message": "模板注册表模板选择无效"
+      }
+    }
+  },
+  {
+    "id": "get-empty-revision",
+    "body": {
+      "operation": "get",
+      "scope": {
+        "tenantKey": "tenant",
+        "baseToken": "base",
+        "tableId": "table"
+      },
+      "selection": {
+        "id": "t",
+        "revision": ""
+      }
+    },
+    "signature": "test",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "TEMPLATE_INVALID",
+        "message": "模板注册表模板选择无效"
+      }
+    }
+  },
+  {
+    "id": "valid-list",
+    "body": {
+      "operation": "list",
+      "scope": {
+        "tenantKey": "tenant",
+        "baseToken": "base",
+        "tableId": "table"
+      }
+    },
+    "signature": "duowei-registry-read-v1.eyJhdWRpZW5jZSI6ImR1b3dlaS10ZW1wbGF0ZS1yZWdpc3RyeS1yZWFkIiwiYm9keURpZ2VzdCI6ImdRTFRIbnkyQm0tekJNZVU4WHNNMk5UTEU1UWFGS21IUzE3RWJBWHVjV1kiLCJleHBpcmVzQXQiOjQxMDI0NDQ4MDAwMDAsImlzc3VlZEF0IjoxLCJ2ZXJzaW9uIjoxfQ.kAiSEJACQ6TuZlW6mMVRcnUH1fO-2srCvwNgnRJI3d8",
+    "storeOperation": "list",
+    "expected": {
+      "status": 200,
+      "body": {
+        "templates": []
+      }
+    }
+  },
+  {
+    "id": "valid-get",
+    "body": {
+      "operation": "get",
+      "scope": {
+        "tenantKey": "tenant",
+        "baseToken": "base",
+        "tableId": "table"
+      },
+      "selection": {
+        "id": "t",
+        "revision": "r1"
+      }
+    },
+    "signature": "duowei-registry-read-v1.eyJhdWRpZW5jZSI6ImR1b3dlaS10ZW1wbGF0ZS1yZWdpc3RyeS1yZWFkIiwiYm9keURpZ2VzdCI6IkoyWkdkZGktUnpaQ3h3YVczSl9QTTZTZHRtNGdBYWZPeGNmSFB2SVV1M0kiLCJleHBpcmVzQXQiOjQxMDI0NDQ4MDAwMDAsImlzc3VlZEF0IjoxLCJ2ZXJzaW9uIjoxfQ.PzMx9f8GUgqeEjt0yTasMRo94PJl-kJ8uaKhovRfhZI",
+    "storeOperation": "get",
+    "expected": {
+      "status": 200,
+      "body": {
+        "template": null
+      }
+    }
+  },
+  {
+    "id": "valid-write",
+    "body": {
+      "scope": {
+        "tenantKey": "tenant",
+        "baseToken": "base",
+        "tableId": "table"
+      },
+      "template": {
+        "id": "t",
+        "revision": "r1",
+        "name": "测试模板",
+        "snapshot": {
+          "pages": []
+        },
+        "referencedFieldIds": []
+      }
+    },
+    "signature": "duowei-registry-v1.eyJhdWRpZW5jZSI6ImR1b3dlaS10ZW1wbGF0ZS1yZWdpc3RyeS13cml0ZSIsImJhc2VUb2tlbiI6ImJhc2UiLCJib2R5RGlnZXN0IjoiVktpNWphWmhuOVFPR3BHZUEtVHpaWTNWWnFTTGEyeUhrNXVRQk1UYUNxQSIsImNhbldyaXRlIjp0cnVlLCJleHBpcmVzQXQiOjQxMDI0NDQ4MDAwMDAsImlzc3VlZEF0IjoxLCJwcmluY2lwYWxJZCI6InRlc3QtdXNlciIsInRhYmxlSWQiOiJ0YWJsZSIsInRlbmFudEtleSI6InRlbmFudCIsInZlcnNpb24iOjF9.5iEppEFfV5MURyAlhAdIbg06Y7t8ldUGSFtSBvT51sY",
+    "storeOperation": "upsert",
+    "expected": {
+      "status": 204,
+      "body": null
+    }
+  }
+]

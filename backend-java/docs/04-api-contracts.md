@@ -40,4 +40,4 @@
 - BridgeContractTest与EventServiceTest分别验证桥接静态契约、事件处理；浏览器交互及真实事件投递仍待验。
 - RequestErrorContractTest与RequestPolicyTest验证请求策略、内容类型、JSON、方法、大小及来源；代理前缀和线上托管鉴权尚未部署验收。
 
-当前构建及外部环境缺口以[验证记录](02-verification.md)为准。本清单不授权部署或切换插件地址。
+当前Goal v2验收及外部环境缺口以[完整验收台账](08-full-acceptance-v1.md)为准；[验证记录](02-verification.md)保留历史构建基线。本清单不授权部署或切换插件地址。

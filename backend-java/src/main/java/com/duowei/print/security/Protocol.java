@@ -14,6 +14,13 @@ public final class Protocol {
 
     private Protocol() {}
 
+    /** Mirrors ECMAScript String.trim used by the original event handler. */
+    public static String trimJavaScript(String value) {
+        return value.replaceAll(
+                "^[\\x09-\\x0D\\x20\\x{00A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]+|[\\x09-\\x0D\\x20\\x{00A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}]+$",
+                "");
+    }
+
     public static String required(JsonNode node, String field) {
         JsonNode value = node.path(field);
         if (!value.isTextual() || value.asText().trim().isEmpty())
@@ -134,6 +141,37 @@ public final class Protocol {
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    /** Background protocol keeps the original endpoint's specific authentication errors. */
+    public static void verifyBackground(String token, JsonNode body, byte[] secret) {
+        JsonNode claims;
+        try {
+            String[] parts = trimJavaScript(token).split("\\.", -1);
+            if (parts.length != 3
+                    || !"duowei-background-job-v1".equals(parts[0])
+                    || !MessageDigest.isEqual(
+                            hmac(secret, parts[0] + "." + parts[1]),
+                            Base64.getUrlDecoder().decode(parts[2])))
+                throw new IllegalArgumentException();
+            claims = JSON.readTree(Base64.getUrlDecoder().decode(parts[1]));
+            if (!claims.path("version").isNumber()
+                    || claims.path("version").doubleValue() != 1.0
+                    || !"duowei-background-job".equals(claims.path("audience").asText()))
+                throw new IllegalArgumentException();
+        } catch (Exception error) {
+            throw new SecurityException("后台任务签名无效");
+        }
+        long now = System.currentTimeMillis();
+        if (!claims.path("expiresAt").isNumber()
+                || !claims.path("issuedAt").isNumber()
+                || claims.path("expiresAt").doubleValue() < now
+                || claims.path("issuedAt").doubleValue() > now + 30000)
+            throw new SecurityException("后台任务签名已过期");
+        if (!body.path("taskKey").equals(claims.path("taskKey")))
+            throw new SecurityException("后台任务键与签名不一致");
+        if (!digest(canonical(body)).equals(claims.path("bodyDigest").asText()))
+            throw new SecurityException("后台任务内容与签名不一致");
     }
 
     public static JsonNode verify(

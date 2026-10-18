@@ -24,6 +24,15 @@ public class RequestPolicy extends OncePerRequestFilter {
     protected void doFilterInternal(
             HttpServletRequest req, HttpServletResponse res, FilterChain chain)
             throws ServletException, IOException {
+        res =
+                new HttpServletResponseWrapper(res) {
+                    @Override
+                    public void addHeader(String name, String value) {
+                        if ("x-duowei-trace-id".equalsIgnoreCase(name))
+                            super.setHeader(name, value);
+                        else super.addHeader(name, value);
+                    }
+                };
         res.setHeader("X-Content-Type-Options", "nosniff");
         res.setHeader("Referrer-Policy", "no-referrer");
         res.setHeader("X-Duowei-Trace-Id", UUID.randomUUID().toString());

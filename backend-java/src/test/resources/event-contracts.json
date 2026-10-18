@@ -1,0 +1,278 @@
+[
+  {
+    "id": "null",
+    "body": null,
+    "expected": {
+      "status": 400,
+      "body": {
+        "code": "JSON_INVALID"
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "array",
+    "body": [],
+    "expected": {
+      "status": 400,
+      "body": {
+        "code": "JSON_INVALID"
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "number",
+    "body": 42,
+    "expected": {
+      "status": 400,
+      "body": {
+        "code": "JSON_INVALID"
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "encrypted",
+    "body": {
+      "encrypt": "",
+      "token": "local-test"
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "code": "ENCRYPTED_EVENT_NOT_CONFIGURED"
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "missing-token",
+    "body": {},
+    "expected": {
+      "status": 401,
+      "body": {
+        "code": "VERIFICATION_FAILED"
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "wrong-token",
+    "body": {
+      "token": "other"
+    },
+    "expected": {
+      "status": 401,
+      "body": {
+        "code": "VERIFICATION_FAILED"
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "numeric-token",
+    "body": {
+      "token": 123
+    },
+    "expected": {
+      "status": 401,
+      "body": {
+        "code": "VERIFICATION_FAILED"
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "challenge",
+    "body": {
+      "token": "local-test",
+      "type": "url_verification",
+      "challenge": " spaced "
+    },
+    "expected": {
+      "status": 200,
+      "body": {
+        "challenge": " spaced "
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "empty-challenge",
+    "body": {
+      "token": "local-test",
+      "type": "url_verification",
+      "challenge": ""
+    },
+    "expected": {
+      "status": 200,
+      "body": {
+        "challenge": ""
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "ignored-event",
+    "body": {
+      "token": "local-test",
+      "event": {
+        "type": "other"
+      }
+    },
+    "expected": {
+      "status": 200,
+      "body": {
+        "code": 0
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "array-event",
+    "body": {
+      "token": "local-test",
+      "event": []
+    },
+    "expected": {
+      "status": 200,
+      "body": {
+        "code": 0
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "wrong-app",
+    "body": {
+      "token": "local-test",
+      "event": {
+        "type": "app_ticket",
+        "app_id": "cli_other",
+        "app_ticket": " ticket-value "
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "code": "APP_TICKET_INVALID"
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "empty-ticket",
+    "body": {
+      "token": "local-test",
+      "event": {
+        "type": "app_ticket",
+        "app_id": "cli_localtest",
+        "app_ticket": " "
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "code": "APP_TICKET_INVALID"
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "numeric-ticket",
+    "body": {
+      "token": "local-test",
+      "event": {
+        "type": "app_ticket",
+        "app_id": "cli_localtest",
+        "app_ticket": 12
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "code": "APP_TICKET_INVALID"
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "unicode-blank-ticket",
+    "body": {
+      "token": "local-test",
+      "event": {
+        "type": "app_ticket",
+        "app_id": "cli_localtest",
+        "app_ticket": " ﻿"
+      }
+    },
+    "expected": {
+      "status": 400,
+      "body": {
+        "code": "APP_TICKET_INVALID"
+      },
+      "savedTickets": []
+    }
+  },
+  {
+    "id": "unicode-padded-ticket",
+    "body": {
+      "token": "local-test",
+      "event": {
+        "type": "app_ticket",
+        "app_id": "cli_localtest",
+        "app_ticket": " ticket-value﻿"
+      }
+    },
+    "expected": {
+      "status": 200,
+      "body": {
+        "code": 0
+      },
+      "savedTickets": [
+        "ticket-value"
+      ]
+    }
+  },
+  {
+    "id": "valid-ticket",
+    "body": {
+      "token": "local-test",
+      "event": {
+        "type": "app_ticket",
+        "app_id": "cli_localtest",
+        "app_ticket": " ticket-value "
+      }
+    },
+    "expected": {
+      "status": 200,
+      "body": {
+        "code": 0
+      },
+      "savedTickets": [
+        "ticket-value"
+      ]
+    }
+  },
+  {
+    "id": "duplicate-ticket",
+    "body": {
+      "token": "local-test",
+      "event": {
+        "type": "app_ticket",
+        "app_id": "cli_localtest",
+        "app_ticket": " ticket-value "
+      }
+    },
+    "expected": {
+      "status": 200,
+      "body": {
+        "code": 0
+      },
+      "savedTickets": [
+        "ticket-value"
+      ]
+    }
+  }
+]

@@ -14,7 +14,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
@@ -75,8 +74,10 @@ public class PostgresProcessRecoveryTest {
         }
     }
 
-    @Test
-    void killedWorkerWaitsForNewCredentialThenResumesPersistedProcessingJob() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"render", "uploaded", "written"})
+    void killedWorkerWaitsForNewCredentialThenResumesPersistedProcessingJob(String window)
+            throws Exception {
         String schema = "duowei_test_" + UUID.randomUUID().toString().replace("-", "");
         Path evidence = Files.createDirectories(Paths.get("target", "process-recovery", schema));
         SingleConnectionDataSource source = connect();
@@ -84,6 +85,7 @@ public class PostgresProcessRecoveryTest {
         Process first = null, second = null;
         boolean created = false;
         try {
+            Files.write(evidence.resolve("crash-window"), window.getBytes(StandardCharsets.UTF_8));
             db.execute("CREATE SCHEMA " + schema);
             created = true;
             db.execute("SET search_path TO " + schema);
@@ -96,7 +98,7 @@ public class PostgresProcessRecoveryTest {
                                 Files.readAllBytes(Paths.get("migrations", migration)),
                                 StandardCharsets.UTF_8));
             first = launch(schema, evidence, "crash");
-            awaitFile(evidence.resolve("render-crash"), first);
+            awaitFile(evidence.resolve("crash-checkpoint"), first);
             BackgroundJobRepository jobs = new BackgroundJobRepository(db);
             assertEquals("processing", jobs.status(KEY));
             assertEquals(1, ((Number) jobs.recoverable().get(0).get("attempt")).intValue());
@@ -129,10 +131,13 @@ public class PostgresProcessRecoveryTest {
                             String.class,
                             KEY));
             assertEquals(
-                    Collections.singletonList("upload"),
-                    Files.readAllLines(evidence.resolve("uploads"), StandardCharsets.UTF_8));
+                    "render".equals(window) ? 1 : 2,
+                    Files.readAllLines(evidence.resolve("uploads"), StandardCharsets.UTF_8).size(),
+                    "Post-upload crash currently repeats upload; this test characterizes the risk");
             assertEquals(
-                    Arrays.asList("等待生成", "生成中"),
+                    "written".equals(window)
+                            ? Arrays.asList("等待生成", "生成中", "生成成功")
+                            : Arrays.asList("等待生成", "生成中"),
                     Files.readAllLines(evidence.resolve("statuses-crash"), StandardCharsets.UTF_8));
             assertEquals(
                     Arrays.asList("生成中", "生成成功"),
@@ -160,6 +165,17 @@ public class PostgresProcessRecoveryTest {
     }
 
     public static class Worker {
+        private static void checkpoint(Path evidence, String mode, String window) throws Exception {
+            if ("crash".equals(mode)
+                    && window.equals(
+                            new String(
+                                    Files.readAllBytes(evidence.resolve("crash-window")),
+                                    StandardCharsets.UTF_8))) {
+                Files.write(evidence.resolve("crash-checkpoint"), new byte[] {1});
+                new java.util.concurrent.CountDownLatch(1).await();
+            }
+        }
+
         public static void main(String[] args) throws Exception {
             Path evidence = Paths.get(args[1]);
             String mode = args[2];
@@ -188,6 +204,7 @@ public class PostgresProcessRecoveryTest {
                                             StandardCharsets.UTF_8,
                                             StandardOpenOption.CREATE,
                                             StandardOpenOption.APPEND);
+                                    checkpoint(evidence, mode, "uploaded");
                                     return Protocol.JSON.readTree(
                                             "{\"data\":{\"file_token\":\"recovered-file\"}}");
                                 }
@@ -200,6 +217,9 @@ public class PostgresProcessRecoveryTest {
                                         StandardCharsets.UTF_8,
                                         StandardOpenOption.CREATE,
                                         StandardOpenOption.APPEND);
+                                if ("生成成功".equals(update.path("fields").path("状态").asText())) {
+                                    checkpoint(evidence, mode, "written");
+                                }
                                 return Protocol.JSON.createObjectNode();
                             });
             RenderService renderer = mock(RenderService.class);
@@ -207,8 +227,7 @@ public class PostgresProcessRecoveryTest {
                     .thenAnswer(
                             call -> {
                                 Files.write(evidence.resolve("render-" + mode), new byte[] {1});
-                                if ("crash".equals(mode))
-                                    new java.util.concurrent.CountDownLatch(1).await();
+                                checkpoint(evidence, mode, "render");
                                 RenderService.Artifact artifact = new RenderService.Artifact();
                                 artifact.bytes = "%PDF-test".getBytes(StandardCharsets.US_ASCII);
                                 artifact.fileName = "test.pdf";

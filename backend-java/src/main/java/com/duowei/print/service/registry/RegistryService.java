@@ -65,15 +65,28 @@ public class RegistryService {
 
     private JsonNode normalizeRead(JsonNode input) {
         ObjectNode result = Protocol.JSON.createObjectNode();
+        JsonNode rawScope = input.path("scope");
+        if (!rawScope.isObject()) throw new IllegalArgumentException("模板注册表读取作用域无效");
+        for (String key : Arrays.asList("tenantKey", "baseToken", "tableId")) {
+            if (!rawScope.path(key).isTextual() || rawScope.path(key).textValue().trim().isEmpty())
+                throw new IllegalArgumentException("模板注册表读取作用域无效");
+        }
         String operation =
                 input.path("operation").isTextual() ? input.path("operation").textValue() : "";
         if (!Arrays.asList("get", "list").contains(operation))
-            throw new IllegalArgumentException("读取操作无效");
+            throw new IllegalArgumentException("模板注册表读取操作无效");
         result.put("operation", operation);
         ObjectNode scope = result.putObject("scope");
         for (String key : Arrays.asList("tenantKey", "baseToken", "tableId"))
             scope.put(key, Protocol.required(input.path("scope"), key));
         if ("get".equals(operation)) {
+            JsonNode rawSelection = input.path("selection");
+            if (!rawSelection.isObject()
+                    || !rawSelection.path("id").isTextual()
+                    || rawSelection.path("id").asText().trim().isEmpty()
+                    || !rawSelection.path("revision").isTextual()
+                    || rawSelection.path("revision").asText().trim().isEmpty())
+                throw new IllegalArgumentException("模板注册表模板选择无效");
             ObjectNode selection = result.putObject("selection");
             selection.put("id", Protocol.required(input.path("selection"), "id"));
             selection.put("revision", Protocol.required(input.path("selection"), "revision"));
