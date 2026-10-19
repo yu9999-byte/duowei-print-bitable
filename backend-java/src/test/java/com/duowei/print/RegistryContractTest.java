@@ -54,13 +54,22 @@ class RegistryContractTest {
                                 .contentType("application/json")
                                 .content("{\"operation\":\"list\"}"))
                 .andExpect(status().isMethodNotAllowed())
-                .andExpect(jsonPath("$.code").value("WRITE_ONLY_ENDPOINT"));
+                .andExpect(jsonPath("$.code").value("WRITE_ONLY_ENDPOINT"))
+                .andExpect(jsonPath("$.message").value("模板写入入口不允许读取"));
         mvc.perform(
                         post("/openapi/duowei-print/registry-read")
                                 .contentType("application/json")
                                 .content("{\"scope\":{}}"))
                 .andExpect(status().isMethodNotAllowed())
-                .andExpect(jsonPath("$.code").value("READ_ONLY_ENDPOINT"));
+                .andExpect(jsonPath("$.code").value("READ_ONLY_ENDPOINT"))
+                .andExpect(jsonPath("$.message").value("自动化公网入口只允许读取模板"));
+        mvc.perform(
+                        post("/openapi/duowei-print/registry-read")
+                                .contentType("application/json")
+                                .content("{\"operation\":\"other\"}"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.code").value("READ_ONLY_ENDPOINT"))
+                .andExpect(jsonPath("$.message").value("自动化公网入口只允许读取模板"));
         verifyNoInteractions(service);
     }
 }

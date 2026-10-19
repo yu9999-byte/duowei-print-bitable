@@ -148,6 +148,14 @@ public class BackgroundService {
 
     private void drain() {
         try {
+            jobs.withWorkerLock(this::drainLocked);
+        } catch (Exception e) {
+            System.err.println("后台任务扫描失败：" + e.getClass().getSimpleName());
+        }
+    }
+
+    private void drainLocked() {
+        try {
             List<Map<String, Object>> recoverable = jobs.recoverable();
             for (Map<String, Object> row : recoverable) {
                 JsonNode persisted = Protocol.JSON.readTree(row.get("submission").toString());
@@ -201,6 +209,7 @@ public class BackgroundService {
 
     private void process(String id, JsonNode b, String token) {
         String statusName = null, errorName = null;
+        boolean uploadStarted = false;
         try {
             Map<String, JsonNode> fields = new HashMap<>();
             String page = "";
@@ -274,6 +283,10 @@ public class BackgroundService {
                                 }
                             },
                             fileHeaders));
+            // Persist uncertainty before issuing the external side effect. A crash must not
+            // automatically replay this upload, even when no file_token was received locally.
+            if (!jobs.beforeUpload(id)) return;
+            uploadStarted = true;
             JsonNode upload =
                     api.call(
                             "https://open.feishu.cn/open-apis/drive/v1/medias/upload_all",
@@ -290,6 +303,10 @@ public class BackgroundService {
             jobs.succeed(id, file);
         } catch (Exception e) {
             String message = com.duowei.print.exception.SafeMessages.sanitize(e.getMessage());
+            if (uploadStarted) {
+                jobs.requireReview(id, "上传或回写结果不确定，请核对附件后恢复：" + message);
+                return;
+            }
             if (statusName != null)
                 try {
                     ObjectNode values = Protocol.JSON.createObjectNode();

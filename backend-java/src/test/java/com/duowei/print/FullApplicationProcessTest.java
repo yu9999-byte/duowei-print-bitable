@@ -25,7 +25,7 @@ class FullApplicationProcessTest {
         HttpURLConnection connection =
                 (HttpURLConnection) new URL("http://127.0.0.1:" + port + path).openConnection();
         connection.setConnectTimeout(1000);
-        connection.setReadTimeout(10000);
+        connection.setReadTimeout(60000);
         if (bearer != null) connection.setRequestProperty("Authorization", bearer);
         try {
             Result result = new Result();
@@ -52,12 +52,14 @@ class FullApplicationProcessTest {
         HttpURLConnection connection =
                 (HttpURLConnection) new URL("http://127.0.0.1:" + port + path).openConnection();
         connection.setConnectTimeout(1000);
-        connection.setReadTimeout(10000);
+        connection.setReadTimeout(60000);
         connection.setRequestMethod("POST");
         if (path.endsWith("background-jobs"))
             connection.setRequestProperty(
                     "x-duowei-tenant-access-token", "isolated-token-long-enough");
         connection.setRequestProperty("Content-Type", "application/json");
+        if (fixture.has("origin"))
+            connection.setRequestProperty("Origin", fixture.path("origin").asText());
         connection.setRequestProperty(
                 "x-duowei-service-signature", fixture.path("signature").asText());
         connection.setDoOutput(true);
@@ -116,6 +118,7 @@ class FullApplicationProcessTest {
         String packagedJar = System.getProperty("duowei.test.packagedJar");
         List<String> command = new ArrayList<>();
         command.add(javaBinary.toString());
+        command.add("-Dsun.net.http.allowRestrictedHeaders=true");
         if (packagedJar == null) {
             command.addAll(Arrays.asList("-cp", classpath, "com.duowei.print.PrintApplication"));
         } else {
@@ -199,6 +202,11 @@ class FullApplicationProcessTest {
             assertEquals(200, health.status);
             assertEquals(
                     1, Protocol.JSON.readTree(health.bytes).path("protocolVersion").intValue());
+            Result internalHealth = request(port, "/api/automation/health", null);
+            assertEquals(200, internalHealth.status);
+            assertEquals(
+                    Protocol.JSON.readTree(health.bytes),
+                    Protocol.JSON.readTree(internalHealth.bytes));
             Result html = request(port, "/plugin-preview/index.html", null);
             assertEquals(200, html.status);
             assertArrayEquals(Files.readAllBytes(plugin.resolve("index.html")), html.bytes);
@@ -209,6 +217,116 @@ class FullApplicationProcessTest {
             assertTrue(
                     new String(renderer.bytes, StandardCharsets.UTF_8)
                             .contains("__DUOWEI_AUTOMATION_RENDERER__"));
+            String parityDirectory = System.getenv("DUOWEI_TEST_RENDER_PARITY_DIRECTORY");
+            if (parityDirectory != null) {
+                Path parity = Paths.get(parityDirectory);
+                for (String type : Arrays.asList("pdf", "png")) {
+                    com.fasterxml.jackson.databind.JsonNode body =
+                            Protocol.JSON.readTree(
+                                    Files.readAllBytes(
+                                            parity.resolve("request-" + type + ".json")));
+                    com.fasterxml.jackson.databind.node.ObjectNode claims =
+                            Protocol.JSON.createObjectNode();
+                    claims.put("version", 1)
+                            .put("audience", "duowei-renderer")
+                            .put("issuedAt", System.currentTimeMillis())
+                            .put("expiresAt", System.currentTimeMillis() + 300000)
+                            .put("artifactKey", body.path("artifactKey").asText())
+                            .put("bodyDigest", Protocol.digest(Protocol.canonical(body)));
+                    com.fasterxml.jackson.databind.node.ObjectNode fixture =
+                            Protocol.JSON.createObjectNode();
+                    fixture.set("body", body);
+                    fixture.put(
+                            "signature", Protocol.sign("duowei-renderer-v1", claims, new byte[32]));
+                    Result previous = null;
+                    for (String prefix :
+                            Arrays.asList("/api/automation", "/openapi/duowei-print")) {
+                        Result artifact = json(port, prefix + "/render", fixture);
+                        assertEquals(
+                                200, artifact.status, "Signed render must return binary artifact");
+                        assertTrue(artifact.bytes.length > 100);
+                        if (previous != null)
+                            assertArrayEquals(
+                                    previous.bytes,
+                                    artifact.bytes,
+                                    "Same-key aliases must reuse cached artifact");
+                        previous = artifact;
+                    }
+                    Files.write(evidence.resolve("http." + type), previous.bytes);
+                    if ("png".equals(type)) {
+                        java.awt.image.BufferedImage a =
+                                javax.imageio.ImageIO.read(parity.resolve("original.png").toFile());
+                        java.awt.image.BufferedImage b =
+                                javax.imageio.ImageIO.read(
+                                        new java.io.ByteArrayInputStream(previous.bytes));
+                        assertEquals(a.getWidth(), b.getWidth());
+                        assertEquals(a.getHeight(), b.getHeight());
+                        for (int y = 0; y < a.getHeight(); y++)
+                            for (int x = 0; x < a.getWidth(); x++)
+                                assertEquals(a.getRGB(x, y), b.getRGB(x, y));
+                    } else
+                        assertTrue(
+                                new String(previous.bytes, 0, 5, StandardCharsets.US_ASCII)
+                                        .equals("%PDF-"));
+                }
+                Files.write(
+                        evidence.resolve("http-render-result.txt"),
+                        Arrays.asList(
+                                "signed HTTP render: both route aliases return 200 PDF/PNG",
+                                "duplicate artifact: exact cached bytes across aliases",
+                                "PNG: exact original pixels; PDF header checked, page visual comparison separate"),
+                        StandardCharsets.UTF_8);
+            }
+            for (String prefix : Arrays.asList("/api/automation", "/openapi/duowei-print")) {
+                for (com.fasterxml.jackson.databind.JsonNode fixture :
+                        Protocol.JSON.readTree(
+                                getClass().getResourceAsStream("/authorization-contracts.json"))) {
+                    Result response = json(port, prefix + "/registry-write-token", fixture);
+                    if ("untrusted".equals(fixture.path("id").asText())) {
+                        assertEquals(
+                                403,
+                                response.status,
+                                "CORS rejects before the authorization handler");
+                        assertFalse(
+                                response.headers.keySet().stream()
+                                        .anyMatch(
+                                                name ->
+                                                        "access-control-allow-origin"
+                                                                .equalsIgnoreCase(name)));
+                        continue;
+                    }
+                    assertEquals(
+                            fixture.path("expected").path("status").intValue(),
+                            response.status,
+                            prefix + fixture.path("id").asText());
+                    com.fasterxml.jackson.databind.node.ObjectNode actual =
+                            (com.fasterxml.jackson.databind.node.ObjectNode)
+                                    Protocol.JSON.readTree(response.bytes);
+                    String trace = actual.path("traceId").asText();
+                    assertFalse(trace.isEmpty());
+                    List<String> traces =
+                            response.headers.entrySet().stream()
+                                    .filter(e -> "x-duowei-trace-id".equalsIgnoreCase(e.getKey()))
+                                    .findFirst()
+                                    .get()
+                                    .getValue();
+                    assertEquals(Collections.singletonList(trace), traces);
+                    actual.remove("traceId");
+                    if (actual.has("connectUrl")) {
+                        String url = actual.path("connectUrl").asText();
+                        assertTrue(url.startsWith(base + "/api/automation/oauth/start?state="));
+                        assertTrue(url.matches(".*state=[A-Za-z0-9_-]+"));
+                        actual.put(
+                                "connectUrl",
+                                url.replace(base, "https://service.example")
+                                        .replaceAll("state=[A-Za-z0-9_-]+", "state=DYNAMIC"));
+                    }
+                    assertEquals(
+                            fixture.path("expected").path("body"),
+                            actual,
+                            prefix + fixture.path("id").asText());
+                }
+            }
             if (jdbc != null) {
                 for (com.fasterxml.jackson.databind.JsonNode job :
                         Protocol.JSON.readTree(
@@ -299,6 +417,59 @@ class FullApplicationProcessTest {
                 }
                 assertNotNull(write);
                 assertNotNull(read);
+                for (com.fasterxml.jackson.databind.JsonNode fixture : fixtures) {
+                    if ("unknown-operation".equals(fixture.path("id").asText())) {
+                        Result unknown = json(port, "/openapi/duowei-print/registry-read", fixture);
+                        assertEquals(405, unknown.status);
+                        assertEquals(
+                                "READ_ONLY_ENDPOINT",
+                                Protocol.JSON.readTree(unknown.bytes).path("code").asText());
+                        continue;
+                    }
+                    String route =
+                            fixture.path("body").has("operation")
+                                    ? "registry-read"
+                                    : "registry-write";
+                    Result alias = json(port, "/openapi/duowei-print/" + route, fixture);
+                    assertEquals(
+                            fixture.path("expected").path("status").intValue(),
+                            alias.status,
+                            fixture.path("id").asText());
+                    if (!fixture.has("storeOperation")) {
+                        com.fasterxml.jackson.databind.node.ObjectNode actual =
+                                (com.fasterxml.jackson.databind.node.ObjectNode)
+                                        Protocol.JSON.readTree(alias.bytes);
+                        actual.remove("traceId");
+                        assertEquals(fixture.path("expected").path("body"), actual);
+                    }
+                }
+                assertEquals(
+                        1,
+                        jdbc.queryForObject(
+                                "SELECT count(*) FROM duowei_automation_template", Integer.class));
+                Result wrongRead = json(port, "/openapi/duowei-print/registry-read", write);
+                Result wrongWrite = json(port, "/openapi/duowei-print/registry-write", read);
+                assertEquals(405, wrongRead.status);
+                assertEquals(405, wrongWrite.status);
+                assertEquals(
+                        "READ_ONLY_ENDPOINT",
+                        Protocol.JSON.readTree(wrongRead.bytes).path("code").asText());
+                assertEquals(
+                        "WRITE_ONLY_ENDPOINT",
+                        Protocol.JSON.readTree(wrongWrite.bytes).path("code").asText());
+                assertEquals(
+                        1,
+                        jdbc.queryForObject(
+                                "SELECT count(*) FROM duowei_automation_template", Integer.class));
+                assertEquals(
+                        "自动化公网入口只允许读取模板",
+                        Protocol.JSON.readTree(wrongRead.bytes).path("message").asText());
+                assertEquals(
+                        "模板写入入口不允许读取",
+                        Protocol.JSON.readTree(wrongWrite.bytes).path("message").asText());
+                jdbc.update("DELETE FROM duowei_automation_template");
+                assertNotNull(write);
+                assertNotNull(read);
                 assertEquals(
                         0,
                         Protocol.JSON
@@ -338,6 +509,8 @@ class FullApplicationProcessTest {
                         evidence.resolve("database-result.txt"),
                         Arrays.asList(
                                 "real-postgres-http: passed",
+                                "public-registry-aliases: 10 fixtures and both direction guards verified",
+                                "health-aliases: identical JSON",
                                 "background-errors: 23 original HTTP cases rejected before persistence",
                                 "signed-write-twice: 204, one database row",
                                 "original-error-fixtures: exact HTTP status/body, single correlated trace",

@@ -54,6 +54,8 @@ node backend-java/scripts/build-browser-resources.mjs
 
 ## 5. 验证与迁移状态
 
+当前Goal v2以[完整验收台账](docs/08-full-acceptance-v1.md)和[17路由状态](docs/09-route-acceptance-status.md)为准。最新全量166项、165通过、1个真实插件宿主挂载错误、零跳过，整体未通过；下文测试数量均为历史轮，不能作为当前全量通过声明。会话锁正常互斥已测，但连接丢失后的重叠、上传后崩溃重复上传、性能及真实飞书链路仍未关闭。
+
 下一步的双后台对照、真实数据库/飞书、文件效果及恢复验收顺序见[一致性验收计划](docs/05-acceptance-plan.md)。本机准备检查：`node backend-java/scripts/check-acceptance-env.mjs`；缺项返回退出码2，不打印凭据，也不执行外部请求。
 
 每轮证据归档、回顾台账及后续试运行回退步骤见[回顾与回退策略](docs/06-review-and-rollback.md)。归档保存在target内，执行clean前需转存受控位置。
@@ -71,6 +73,8 @@ node backend-java/scripts/build-browser-resources.mjs
 原系统界面是独立飞书记录视图插件，妙搭首页只是框架欢迎页。Java可选托管原插件构建用于预览；入口、配置与验收限制见[系统展示与连接](docs/07-system-display.md)。
 
 HTTPS代理负责TLS。OAuth会话和临时租户凭证在进程内存，当前限单实例；重启后需重新连接或触发自动化。Java需要独立运行环境，不直接复用NestJS托管命令。真实Chrome已导出两页PDF及第一页PNG，并验证变量值改变输出像素；复杂模板、真实飞书授权、PostgreSQL及附件回写尚需完整验收。本次不发布、不切换线上后台。
+
+Worker新增的PostgreSQL会话锁仅改善同库同schema健康连接的互斥，不解除单实例部署限制。锁持有期间占用一个独立连接，连接池必须另有可用连接供任务SQL使用；禁止将池大小设为1。必须使用保持会话的数据库连接方式，事务级连接代理不适用。锁连接断开而旧回调仍运行的重叠风险已复现，不能据此允许滚动发布或新旧后台同时消费。重启后不要直接批量重放processing任务，先按[回退策略](docs/06-review-and-rollback.md)核对外部附件。
 
 HTTP路径及认证映射见[接口清单](docs/04-api-contracts.md)。
 

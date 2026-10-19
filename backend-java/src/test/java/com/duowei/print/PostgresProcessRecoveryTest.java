@@ -101,13 +101,23 @@ public class PostgresProcessRecoveryTest {
             awaitFile(evidence.resolve("crash-checkpoint"), first);
             BackgroundJobRepository jobs = new BackgroundJobRepository(db);
             assertEquals("processing", jobs.status(KEY));
-            assertEquals(1, ((Number) jobs.recoverable().get(0).get("attempt")).intValue());
+            assertEquals(
+                    1,
+                    db.queryForObject(
+                            "SELECT attempt FROM duowei_automation_background_job WHERE task_key=?",
+                            Integer.class,
+                            KEY));
             stop(first);
             second = launch(schema, evidence, "resume");
             awaitFile(evidence.resolve("ready-resume"), second);
             Thread.sleep(1000);
             assertEquals("processing", jobs.status(KEY));
-            assertEquals(1, ((Number) jobs.recoverable().get(0).get("attempt")).intValue());
+            assertEquals(
+                    1,
+                    db.queryForObject(
+                            "SELECT attempt FROM duowei_automation_background_job WHERE task_key=?",
+                            Integer.class,
+                            KEY));
             assertFalse(
                     Files.exists(evidence.resolve("render-resume")),
                     "Must not render without fresh credentials");
@@ -117,6 +127,22 @@ public class PostgresProcessRecoveryTest {
             Files.write(evidence.resolve("provide-credential"), new byte[] {1});
             assertTrue(second.waitFor(30, TimeUnit.SECONDS), "Recovery JVM did not complete");
             assertEquals(0, second.exitValue(), "See resume.log");
+            if (!"render".equals(window)) {
+                assertEquals("processing", jobs.status(KEY));
+                assertEquals(
+                        1,
+                        Files.readAllLines(evidence.resolve("uploads"), StandardCharsets.UTF_8)
+                                .size());
+                assertFalse(Files.exists(evidence.resolve("render-resume")));
+                assertTrue(jobs.recoverable().isEmpty());
+                assertTrue(
+                        db.queryForObject(
+                                        "SELECT error FROM duowei_automation_background_job WHERE task_key=?",
+                                        String.class,
+                                        KEY)
+                                .startsWith(BackgroundJobRepository.REVIEW_REQUIRED));
+                return;
+            }
             assertEquals("succeeded", jobs.status(KEY));
             assertEquals(
                     2,
@@ -259,6 +285,14 @@ public class PostgresProcessRecoveryTest {
                         Protocol.sign("duowei-background-job-v1", claims, new byte[32]),
                         "test-ephemeral-token-long-enough",
                         body);
+                if (!"render"
+                        .equals(
+                                new String(
+                                        Files.readAllBytes(evidence.resolve("crash-window")),
+                                        StandardCharsets.UTF_8))) {
+                    Thread.sleep(1000);
+                    return;
+                }
                 long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
                 while (!"succeeded".equals(jobs.status(KEY))) {
                     if (System.nanoTime() > deadline)

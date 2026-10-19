@@ -1,0 +1,168 @@
+[
+  {
+    "id": "invalid-0",
+    "body": null,
+    "origin": "https://plugin.example",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "REQUEST_INVALID",
+        "message": "模板同步授权请求无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-1",
+    "body": [],
+    "origin": "https://plugin.example",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "REQUEST_INVALID",
+        "message": "模板同步授权请求无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-2",
+    "body": 42,
+    "origin": "https://plugin.example",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "REQUEST_INVALID",
+        "message": "模板同步授权请求无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-3",
+    "body": {},
+    "origin": "https://plugin.example",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "REQUEST_INVALID",
+        "message": "模板同步授权请求无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-4",
+    "body": {
+      "scope": {},
+      "template": {}
+    },
+    "origin": "https://plugin.example",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "REQUEST_INVALID",
+        "message": "模板同步授权请求无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-5",
+    "body": {
+      "scope": {
+        "baseToken": "base",
+        "tableId": "table"
+      },
+      "template": {},
+      "extra": true
+    },
+    "origin": "https://plugin.example",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "REQUEST_INVALID",
+        "message": "模板同步授权请求无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-6",
+    "body": {
+      "scope": {
+        "baseToken": "base",
+        "tableId": "table",
+        "tenantKey": "tenant"
+      },
+      "template": {}
+    },
+    "origin": "https://plugin.example",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "REQUEST_INVALID",
+        "message": "模板同步授权请求无效"
+      }
+    }
+  },
+  {
+    "id": "invalid-7",
+    "body": {
+      "scope": {
+        "baseToken": "base",
+        "tableId": "table"
+      },
+      "template": []
+    },
+    "origin": "https://plugin.example",
+    "expected": {
+      "status": 400,
+      "body": {
+        "success": false,
+        "code": "REQUEST_INVALID",
+        "message": "模板同步授权请求无效"
+      }
+    }
+  },
+  {
+    "id": "untrusted",
+    "body": {
+      "scope": {
+        "baseToken": "base",
+        "tableId": "table"
+      },
+      "template": {}
+    },
+    "origin": "https://evil.example",
+    "expected": {
+      "status": 401,
+      "body": {
+        "success": false,
+        "code": "IDENTITY_INVALID",
+        "message": "模板同步请求来源不受信任"
+      }
+    }
+  },
+  {
+    "id": "connection-required",
+    "body": {
+      "scope": {
+        "baseToken": "base",
+        "tableId": "table"
+      },
+      "template": {}
+    },
+    "origin": "https://plugin.example",
+    "expected": {
+      "status": 401,
+      "body": {
+        "success": false,
+        "code": "AUTH_REQUIRED",
+        "message": "请先连接飞书账号以启用自动化模板同步",
+        "connectUrl": "https://service.example/api/automation/oauth/start?state=DYNAMIC"
+      }
+    }
+  }
+]

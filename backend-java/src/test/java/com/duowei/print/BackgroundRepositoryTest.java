@@ -32,6 +32,6 @@ class BackgroundRepositoryTest {
         assertTrue(jobs.recoverable().isEmpty());
         verify(db)
                 .queryForList(
-                        "SELECT job_id,task_key,status,attempt,submission FROM duowei_automation_background_job WHERE status IN ('queued','processing') ORDER BY created_at");
+                        "SELECT job_id,task_key,status,attempt,submission FROM duowei_automation_background_job WHERE status IN ('queued','processing') AND COALESCE(error,'') NOT LIKE '[REVIEW_REQUIRED]%' ORDER BY created_at");
     }
 }

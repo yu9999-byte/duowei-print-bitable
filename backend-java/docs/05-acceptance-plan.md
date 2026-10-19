@@ -38,7 +38,9 @@
 4. 导出脱敏业务模板及字段样本；记录两边浏览器、字体、时区、语言与页面尺寸。
 5. 从仓库根执行`node backend-java/scripts/check-acceptance-env.mjs`，只检查本机工具及配置是否存在，不访问数据库、飞书或打印密钥。此检查不等于连接测试。
 
-## 5. 当前状态与下一步
+## 5. 历史基线与执行入口
+
+当前Goal v2的逐轮结果、已知失败及未验项目统一见[完整验收台账](08-full-acceptance-v1.md)。以下数量是历史轮记录，不是当前全量通过声明。
 
 已提供离线JSON响应比较器：`node backend-java/scripts/compare-contract-results.mjs original.json java.json`。输入均为非空数组，每条包含`id`（案例编号）、`status`、`body`；body含顶层traceId时还需traceHeader并保持同侧一致。仅忽略顶层随机traceId，严格比较状态及其他JSON业务内容，拒绝缺案例、重复案例和空结果。退出码0表示这些JSON响应相同，1表示有差异，2表示输入证据无效；报告不打印响应正文。此工具不发请求，不比较响应头全集、文件、数据库、飞书最终状态，不代表全部接口验收。自测命令：`node --test backend-java/scripts/compare-contract-results.test.mjs`。采集前需脱敏且保留独立受控证据。
 

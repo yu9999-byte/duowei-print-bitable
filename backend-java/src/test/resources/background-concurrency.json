@@ -1,0 +1,215 @@
+[
+  {
+    "initialStatus": null,
+    "requests": 8,
+    "expected": [
+      {
+        "status": 202,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": false
+        }
+      },
+      {
+        "status": 202,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": false
+        }
+      },
+      {
+        "status": 202,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": false
+        }
+      },
+      {
+        "status": 202,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": false
+        }
+      },
+      {
+        "status": 202,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": false
+        }
+      },
+      {
+        "status": 202,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": false
+        }
+      },
+      {
+        "status": 202,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": false
+        }
+      },
+      {
+        "status": 202,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": false
+        }
+      }
+    ],
+    "finalStatus": "queued"
+  },
+  {
+    "initialStatus": "failed",
+    "requests": 8,
+    "expected": [
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": true
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": true
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": true
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": true
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": true
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": true
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": true
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "queued",
+          "reused": true
+        }
+      }
+    ],
+    "finalStatus": "queued"
+  },
+  {
+    "initialStatus": "succeeded",
+    "requests": 8,
+    "expected": [
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "succeeded",
+          "reused": true
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "succeeded",
+          "reused": true
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "succeeded",
+          "reused": true
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "succeeded",
+          "reused": true
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "succeeded",
+          "reused": true
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "succeeded",
+          "reused": true
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "succeeded",
+          "reused": true
+        }
+      },
+      {
+        "status": 200,
+        "body": {
+          "jobId": "duowei-job:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "succeeded",
+          "reused": true
+        }
+      }
+    ],
+    "finalStatus": "succeeded"
+  }
+]

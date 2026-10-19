@@ -22,6 +22,13 @@ class BackgroundProcessingTest {
             })
     void rejectsMalformedFieldMetadataBeforeRendering(String data) throws Exception {
         BackgroundJobRepository jobs = mock(BackgroundJobRepository.class);
+        when(jobs.beforeUpload(anyString())).thenReturn(true);
+        when(jobs.withWorkerLock(any()))
+                .thenAnswer(
+                        call -> {
+                            ((Runnable) call.getArgument(0)).run();
+                            return true;
+                        });
         FeishuClient api = mock(FeishuClient.class);
         RenderService renderer = mock(RenderService.class);
         AutomationConfiguration config = mock(AutomationConfiguration.class);
@@ -58,6 +65,13 @@ class BackgroundProcessingTest {
             })
     void recoveryRejectsInvalidPersistedRowBeforeCallingFeishu(String invalid) throws Exception {
         BackgroundJobRepository jobs = mock(BackgroundJobRepository.class);
+        when(jobs.beforeUpload(anyString())).thenReturn(true);
+        when(jobs.withWorkerLock(any()))
+                .thenAnswer(
+                        call -> {
+                            ((Runnable) call.getArgument(0)).run();
+                            return true;
+                        });
         FeishuClient api = mock(FeishuClient.class);
         RenderService renderer = mock(RenderService.class);
         AutomationConfiguration config = mock(AutomationConfiguration.class);
@@ -93,6 +107,13 @@ class BackgroundProcessingTest {
     @org.junit.jupiter.params.provider.ValueSource(strings = {"状态", " 状态 "})
     void renderingFailurePersistsFailureAndDoesNotUpload(String statusName) throws Exception {
         BackgroundJobRepository jobs = mock(BackgroundJobRepository.class);
+        when(jobs.beforeUpload(anyString())).thenReturn(true);
+        when(jobs.withWorkerLock(any()))
+                .thenAnswer(
+                        call -> {
+                            ((Runnable) call.getArgument(0)).run();
+                            return true;
+                        });
         FeishuClient api = mock(FeishuClient.class);
         RenderService renderer = mock(RenderService.class);
         AutomationConfiguration config = mock(AutomationConfiguration.class);
@@ -143,6 +164,13 @@ class BackgroundProcessingTest {
     @org.junit.jupiter.params.provider.ValueSource(ints = {2, 20971520, 20971521})
     void successUploadsAndUpdatesOnlySelectedFields(int byteCount) throws Exception {
         BackgroundJobRepository jobs = mock(BackgroundJobRepository.class);
+        when(jobs.beforeUpload(anyString())).thenReturn(true);
+        when(jobs.withWorkerLock(any()))
+                .thenAnswer(
+                        call -> {
+                            ((Runnable) call.getArgument(0)).run();
+                            return true;
+                        });
         FeishuClient api = mock(FeishuClient.class);
         RenderService renderer = mock(RenderService.class);
         AutomationConfiguration config = mock(AutomationConfiguration.class);

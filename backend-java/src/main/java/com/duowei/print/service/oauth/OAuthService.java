@@ -69,7 +69,7 @@ public class OAuthService {
                     && allowed.contains(plugin)) {
                 origin = plugin;
                 bridge = true;
-            } else throw new SecurityException("请求来源不受信任");
+            } else throw new SecurityException("模板同步请求来源不受信任");
         }
         String id = null;
         if (req.getCookies() != null)

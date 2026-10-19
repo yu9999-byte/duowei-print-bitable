@@ -32,3 +32,32 @@ for (const item of cases) {
 }
 await writeFile(new URL("../src/test/resources/background-contracts.json", import.meta.url), JSON.stringify(cases, null, 2) + "\n");
 console.log(`Generated ${cases.length} original background contracts.`);
+const concurrency = [];
+for (const initialStatus of [null, "failed", "succeeded"]) {
+  const inner = original.createInMemoryBackgroundJobStore({ now: () => 1e3 });
+  if (initialStatus) {
+    const job = await inner.createOrGet(body);
+    job.status = initialStatus;
+    await inner.save(job);
+  }
+  let arrived = 0, release;
+  const barrier = new Promise((resolve) => {
+    release = resolve;
+  });
+  const store = { ...inner, get: async (key) => {
+    const found = await inner.get(key);
+    if (++arrived === 8) release();
+    await barrier;
+    return found;
+  } };
+  const handler = original.createBackgroundJobHttpHandler({ store, signingSecret: new Uint8Array(32), now: () => 1e3 });
+  const responses = await Promise.all(Array.from({ length: 8 }, async () => {
+    const response = await handler(new Request("https://test.invalid/background-jobs", { method: "POST", headers: { "content-type": "application/json", "x-duowei-service-signature": signature(body) }, body: JSON.stringify(body) }));
+    const result = await response.json();
+    delete result.traceId;
+    return { status: response.status, body: result };
+  }));
+  concurrency.push({ initialStatus, requests: 8, expected: responses, finalStatus: (await inner.get(body.taskKey)).status });
+}
+await writeFile(new URL("../src/test/resources/background-concurrency.json", import.meta.url), JSON.stringify(concurrency, null, 2) + "\n");
+console.log("Generated original background concurrency contracts: 3 rounds x 8 requests.");

@@ -35,14 +35,23 @@ public class RegistryController {
             @RequestHeader(value = "x-duowei-service-signature", defaultValue = "")
                     String signature,
             @RequestBody JsonNode body) {
-        boolean read = body.has("operation");
         String path = request.getRequestURI();
-        if (path.endsWith("registry-write") && read)
-            return ResponseEntity.status(405).body(error("WRITE_ONLY_ENDPOINT"));
-        if (path.endsWith("registry-read") && !read)
-            return ResponseEntity.status(405).body(error("READ_ONLY_ENDPOINT"));
+        boolean publicRead =
+                body.path("operation").isTextual()
+                        && Arrays.asList("get", "list")
+                                .contains(body.path("operation").textValue());
+        if (path.endsWith("registry-write") && publicRead)
+            return directionFailure("WRITE_ONLY_ENDPOINT", "模板写入入口不允许读取");
+        if (path.endsWith("registry-read") && !publicRead)
+            return directionFailure("READ_ONLY_ENDPOINT", "自动化公网入口只允许读取模板");
         if (signature.trim().isEmpty()) return failure(401, "AUTH_REQUIRED", "模板注册表请求缺少身份签名");
         return service.execute(body, signature);
+    }
+
+    private ResponseEntity<?> directionFailure(String code, String message) {
+        Map<String, Object> result = error(code);
+        result.put("message", message);
+        return ResponseEntity.status(405).body(result);
     }
 
     private Map<String, Object> error(String code) {

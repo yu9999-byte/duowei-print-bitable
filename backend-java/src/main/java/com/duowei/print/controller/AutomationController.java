@@ -26,12 +26,28 @@ public class AutomationController {
         "/api/automation/registry-write-token",
         "/openapi/duowei-print/registry-write-token"
     })
-    public ResponseEntity<?> authorize(HttpServletRequest request, @RequestBody ObjectNode body) {
+    public ResponseEntity<?> authorize(HttpServletRequest request, @RequestBody JsonNode body) {
+        if (!validDraft(body)) return jobFailure(400, "REQUEST_INVALID", "模板同步授权请求无效");
         try {
-            return oauth.authorize(request, body);
+            return oauth.authorize(request, (ObjectNode) body);
         } catch (SecurityException error) {
             return jobFailure(401, "IDENTITY_INVALID", error.getMessage());
         }
+    }
+
+    private boolean validDraft(JsonNode body) {
+        if (body == null
+                || !body.isObject()
+                || body.size() != 2
+                || !body.path("template").isObject()) return false;
+        JsonNode scope = body.path("scope");
+        if (!scope.isObject() || scope.size() != 2) return false;
+        for (String key : new String[] {"baseToken", "tableId"})
+            if (!scope.path(key).isTextual()
+                    || com.duowei.print.security.Protocol.trimJavaScript(
+                                    scope.path(key).textValue())
+                            .isEmpty()) return false;
+        return true;
     }
 
     @GetMapping({"/api/automation/oauth/start", "/openapi/duowei-print/oauth/start"})

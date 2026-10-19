@@ -18,6 +18,12 @@ class BackgroundValidationTest {
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void signedSubmissionPreservesNewAndReusedResponseContract(boolean existing) throws Exception {
         BackgroundJobRepository jobs = mock(BackgroundJobRepository.class);
+        when(jobs.withWorkerLock(any()))
+                .thenAnswer(
+                        call -> {
+                            ((Runnable) call.getArgument(0)).run();
+                            return true;
+                        });
         AutomationConfiguration config = mock(AutomationConfiguration.class);
         when(config.workerInterval()).thenReturn(60000L);
         byte[] key = new byte[32];
@@ -92,6 +98,12 @@ class BackgroundValidationTest {
     @Test
     void rejectsMissingCredentialsBeforePersistence() {
         BackgroundJobRepository jobs = mock(BackgroundJobRepository.class);
+        when(jobs.withWorkerLock(any()))
+                .thenAnswer(
+                        call -> {
+                            ((Runnable) call.getArgument(0)).run();
+                            return true;
+                        });
         AutomationConfiguration config = mock(AutomationConfiguration.class);
         when(config.workerInterval()).thenReturn(60000L);
         BackgroundService service =
@@ -110,6 +122,12 @@ class BackgroundValidationTest {
     @Test
     void rejectsDuplicateTargetFieldsBeforeSignatureOrDatabase() {
         BackgroundJobRepository jobs = mock(BackgroundJobRepository.class);
+        when(jobs.withWorkerLock(any()))
+                .thenAnswer(
+                        call -> {
+                            ((Runnable) call.getArgument(0)).run();
+                            return true;
+                        });
         AutomationConfiguration config = mock(AutomationConfiguration.class);
         when(config.workerInterval()).thenReturn(60000L);
         BackgroundService service =
