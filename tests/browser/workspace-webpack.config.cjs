@@ -1,4 +1,5 @@
 const path = require("node:path");
+const webpack = require("webpack");
 
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const { VueLoaderPlugin } = require("vue-loader");
@@ -48,6 +49,7 @@ module.exports = {
     ],
   },
   plugins: [
+    new webpack.DefinePlugin({ __DUOWEI_PLUGIN_HOST__: JSON.stringify(process.env.DUOWEI_PLUGIN_HOST === "table" ? "table" : "record") }),
     new VueLoaderPlugin(),
     new HtmlWebpackPlugin({
       template: path.resolve(projectRoot, "record-view/index.html"),
@@ -62,6 +64,11 @@ module.exports = {
     host: "127.0.0.1",
     port: 8081,
     hot: false,
+    client: {
+      overlay: {
+        runtimeErrors: (error) => !error.message.includes("ResizeObserver loop"),
+      },
+    },
     static: [
       {
         directory: __dirname,

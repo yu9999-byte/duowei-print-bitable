@@ -1,6 +1,7 @@
 export type TemplateStorage = {
   getData<T = unknown>(key: string): Promise<T | null | undefined>;
   setData<T = unknown>(key: string, data: T): Promise<boolean>;
+  compareAndSetData?<T = unknown>(key: string, data: T, expectedRevision: string | null): Promise<boolean>;
 };
 
 export type StoredTemplate = {
@@ -281,6 +282,16 @@ function parseCollection(raw: unknown, context: TemplateContext): TemplateCollec
   return cloneJsonValue({ templates: envelope.templates, defaultId: envelope.defaultId, revision: envelope.revision });
 }
 
+export function templateCollectionEnvelope(context: TemplateContext, collection: TemplateCollection): unknown {
+  const envelope = {
+    schemaVersion: 2, engine: ENGINE, engineVersion: ENGINE_VERSION,
+    ...context, templates: cloneJsonValue(collection.templates), defaultId: collection.defaultId,
+    revision: collectionRevision(collection.templates, collection.defaultId),
+  };
+  parseCollection(envelope, context);
+  return envelope;
+}
+
 export function createTemplateRepository(
   storage: TemplateStorage,
   now: () => Date = () => new Date(),
@@ -318,7 +329,10 @@ export function createTemplateRepository(
       baseId: context.baseId, tableId: context.tableId,
       templates: collection.templates, defaultId: collection.defaultId, revision,
     };
-    const persisted = await storage.setData(templateCollectionKey(context.baseId, context.tableId), envelope);
+    const key = templateCollectionKey(context.baseId, context.tableId);
+    const persisted = storage.compareAndSetData
+      ? await storage.compareAndSetData(key, envelope, expectedRevision)
+      : await storage.setData(key, envelope);
     if (!persisted) throw new Error("活动模板保存失败，飞书存储未确认写入");
     return cloneJsonValue({ templates: collection.templates, defaultId: collection.defaultId, revision });
   };

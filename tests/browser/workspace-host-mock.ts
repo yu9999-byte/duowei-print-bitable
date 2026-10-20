@@ -2,6 +2,24 @@ type StoredValue = unknown;
 
 const storage = new Map<string, StoredValue>();
 const query = new URLSearchParams(window.location.search);
+const hostCalls = { picker: 0, firstRow: [] as unknown[], records: [] as string[], writes: 0 };
+(window as any).__hostCalls = hostCalls;
+const hostControls = {
+  pickerIds: null as string[] | null,
+  pickerError: false,
+  recordErrors: query.get("unavailable")?.split(",").filter(Boolean) ?? [] as string[],
+  recordDelayMs: 0,
+  firstRecordId: null as string | null,
+  firstRowError: false,
+  firstRowDelayMs: 0,
+  emptySource: null as boolean | null,
+  sourceViews: null as Array<{ id: string; name: string; type: number }> | null,
+  firstRecordsByView: null as Record<string, string | null> | null,
+  readError: false,
+  writeError: false,
+};
+(window as any).__hostControls = hostControls;
+export const ViewType = { Grid: 1, Form: 3, WidgetView: 100 };
 const persistentStorageNamespace = query.get("storage");
 
 function browserStorageKey(key: string): string {
@@ -9,6 +27,7 @@ function browserStorageKey(key: string): string {
 }
 
 function readStoredValue<T>(key: string): T | null {
+  if (hostControls.readError) throw new Error("TEST: template read failed");
   if (!persistentStorageNamespace) {
     return (storage.get(key) as T | undefined) ?? null;
   }
@@ -22,6 +41,8 @@ function readStoredValue<T>(key: string): T | null {
 }
 
 function writeStoredValue<T>(key: string, value: T): boolean {
+  hostCalls.writes++;
+  if (hostControls.writeError) throw new Error("TEST: template write failed");
   if (!persistentStorageNamespace) {
     storage.set(key, value);
     return true;
@@ -119,13 +140,27 @@ const table = {
     return "订单管理";
   },
   async getRecordById(recordId: string) {
+    hostCalls.records.push(recordId);
+    const shouldFail = hostControls.recordErrors.includes(recordId);
+    if (hostControls.recordDelayMs) await new Promise(resolve => setTimeout(resolve, hostControls.recordDelayMs));
+    if (shouldFail || !records[recordId]) throw new Error(`TEST: record unavailable ${recordId}`);
     return { fields: { ...records[recordId], ...(showDetails ? {
       fldLines: { tableId: "tblLines", recordIds: ["line1", "line2"] },
       fldPayments: { tableId: "tblLines", recordIds: ["line1"] },
     } : {}) } };
   },
   async getViewMetaList() {
-    return [];
+    return hostControls.sourceViews ?? [{ id: "vewAllOrders", name: "全部订单", type: ViewType.Grid }];
+  },
+  async getRecordIdListByPage(params: { viewId?: string; pageSize?: number }) {
+    hostCalls.firstRow.push(params);
+    if (hostControls.firstRowDelayMs) await new Promise(resolve => setTimeout(resolve, hostControls.firstRowDelayMs));
+    if (hostControls.firstRowError) throw new Error("TEST: source view unavailable");
+    const empty = hostControls.emptySource ?? query.get("empty") === "1";
+    const first = hostControls.firstRecordsByView && params.viewId && params.viewId in hostControls.firstRecordsByView
+      ? hostControls.firstRecordsByView[params.viewId!]
+      : hostControls.firstRecordId || query.get("first") || "rec001";
+    return { recordIds: empty || !first ? [] : [first], total: empty ? 0 : 10, hasMore: !empty };
   },
   async getViewById() {
     return undefined;
@@ -146,7 +181,12 @@ const selection = {
   baseId: "basVisualReview",
   tableId: "tblOrders",
   viewId: "vewAllOrders",
-  recordId: "rec001",
+  recordId: query.get("hostRecord") || "rec001",
+};
+const selectionListeners = new Set<(event: { data: typeof selection }) => void>();
+(window as any).__setHostSelection = (patch: Partial<typeof selection>) => {
+  Object.assign(selection, patch);
+  for (const listener of selectionListeners) listener({ data: { ...selection } });
 };
 
 export const FieldType = {
@@ -162,8 +202,9 @@ export const bitable = {
     async getTable(tableId?: string) {
       return tableId === "tblLines" ? detailTable : table;
     },
-    onSelectionChange() {
-      return () => undefined;
+    onSelectionChange(listener: (event: { data: typeof selection }) => void) {
+      selectionListeners.add(listener);
+      return () => selectionListeners.delete(listener);
     },
   },
   bridge: {
@@ -176,7 +217,9 @@ export const bitable = {
   },
   ui: {
     async selectRecordIdList() {
-      return selectedRecordIds;
+      hostCalls.picker++;
+      if (hostControls.pickerError) throw new Error("TEST: picker failed");
+      return hostControls.pickerIds ?? selectedRecordIds;
     },
   },
 };

@@ -1,7 +1,8 @@
 const path = require("node:path");
 const webpack = require("webpack");
 
-process.chdir(__dirname);
+const hostDirectory = process.env.DUOWEI_PLUGIN_HOST === "table" ? path.resolve(__dirname, "../table-view") : __dirname;
+process.chdir(hostDirectory);
 
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const { VueLoaderPlugin } = require("vue-loader");
@@ -19,7 +20,7 @@ module.exports = {
   entry: path.resolve(projectRoot, "src/main.ts"),
   devtool: isDevelopment ? "inline-source-map" : false,
   output: {
-    path: path.resolve(__dirname, "dist"),
+    path: path.resolve(hostDirectory, "dist"),
     filename: "assets/[name].[contenthash:8].js",
     clean: true,
     publicPath: isDevelopment ? "/" : "./",
@@ -63,6 +64,8 @@ module.exports = {
   plugins: [
     new VueLoaderPlugin(),
     new webpack.DefinePlugin({
+      __DUOWEI_PLUGIN_HOST__: JSON.stringify(process.env.DUOWEI_PLUGIN_HOST === "table" ? "table" : "record"),
+      __DUOWEI_SHARED_TEMPLATE_ENDPOINT__: JSON.stringify(process.env.DUOWEI_SHARED_TEMPLATE_ENDPOINT ?? ""),
       __DUOWEI_TEMPLATE_SYNC_CONFIG__: JSON.stringify({
         authorizationEndpoint: process.env.DUOWEI_TEMPLATE_SYNC_AUTHORIZATION_ENDPOINT ?? "",
         registryEndpoint: process.env.DUOWEI_TEMPLATE_REGISTRY_WRITE_ENDPOINT ?? "",

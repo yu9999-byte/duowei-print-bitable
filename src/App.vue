@@ -27,12 +27,15 @@ import {
 import {
   getActiveSelection,
   getCurrentRecordIds,
+  getInitialTableViewRecord,
   sameContext,
   selectRecordIds,
+  setSourceViewId,
   type FeishuSelection,
 } from "./host/feishu-context.ts";
 import { loadPrintJob } from "./host/bitable-gateway.ts";
-import { templateRepository } from "./host/template-storage.ts";
+import { templateRepository, sharedTemplateBridge, ensureSharedTemplateMigration } from "./host/template-storage.ts";
+import { isTableViewHost, rememberTableViewRecord, resolveTableViewRecord } from "./host/plugin-host.ts";
 import { automationTemplateSync } from "./host/automation-template-sync.ts";
 import { RegistryConnectionRequiredError } from "./automation/registry-write-authorization.ts";
 import { isDetailLinkField, type PrintJob } from "./core/print-job.ts";
@@ -124,6 +127,33 @@ const templateFallback = ref(false);
 const templateLoaded = ref(false);
 const templateSaveAllowed = ref(false);
 const templateDirty = ref(false);
+const sourceViews = ref<Array<{ id: string; name: string }>>([]);
+const selectedSourceView = ref("");
+
+function handleSharedTemplateMessage(event: MessageEvent) { sharedTemplateBridge?.handleMessage(event); }
+async function connectSharedTemplates() {
+  if (!sharedTemplateBridge) return;
+  const popup = window.open(sharedTemplateBridge.url, "_blank", "popup,width=560,height=720");
+  if (!popup) { error.value = "连接窗口被浏览器拦截，请允许弹窗后重试"; return; }
+  sharedTemplateBridge.attach(popup);
+  requestLoadRecords(false);
+}
+
+async function selectInitialTableRecord() {
+  const revision = contextRevision;
+  const active = await getActiveSelection();
+  if (!selectedSourceView.value) throw new Error("请先选择数据视图");
+  setSourceViewId(selectedSourceView.value);
+  const ids = await selectRecordIds(active);
+  if (!ids.length) { status.value = "尚未选择打印记录"; return; }
+  await assertCurrentContext(active, revision);
+  rememberTableViewRecord(active, ids[0], { sourceViewId: selectedSourceView.value, explicit: true });
+  await loadRecords(false);
+  if (ids.length > 1 && selectedTemplateId.value && templateLoaded.value) {
+    const refreshed = await getActiveSelection();
+    await loadBatchCandidate(createBatchRetryRequest(refreshed, selectedTemplateId.value, ids));
+  }
+}
 const selectedTemplateId = ref<string | null>(null);
 const decisionDialog = ref<"leave" | "reload" | "context" | null>(null);
 const templateManagementDialog = ref<{ action: "rename" | "remove"; item: StoredTemplate } | null>(null);
@@ -489,29 +519,36 @@ async function loadRecords(useBatchPicker = false) {
     previewError.value = "";
     templateWarning.value = "";
     workspaceMode.value = initialWorkspaceMode();
+    batchSession.value = createSinglePrintSession(null);
     renderedPages.value = null;
     batchPreviewStale.value = false;
   }
   try {
-    const active = await getActiveSelection();
+    let active = await getActiveSelection();
     selection.value = active;
-    const ids = getCurrentRecordIds(active);
+    const preloadedTemplates = await readTemplateCollection(active);
     await assertCurrentContext(active, revision);
-    if (!ids.length) {
-      status.value = "当前不是有效的记录视图，请从多维表格记录详情打开多维打印";
-      return;
+    templateCollection.value = preloadedTemplates.collection;
+    let initialRecordError = "";
+    if (isTableViewHost) {
+      try {
+        const initial = await getInitialTableViewRecord(active, selectedSourceView.value);
+        await assertCurrentContext(active, revision);
+        sourceViews.value = initial.views;
+        selectedSourceView.value = initial.sourceViewId;
+        setSourceViewId(initial.sourceViewId);
+        active = { ...active, recordId: resolveTableViewRecord(active, initial) };
+        selection.value = active;
+      } catch (cause) {
+        await assertCurrentContext(active, revision);
+        initialRecordError = cause instanceof Error ? cause.message : "读取来源视图失败";
+      }
     }
-    const job = await loadPrintJob(active, ids);
-    await assertCurrentContext(active, revision);
-    batchSession.value = createSinglePrintSession(active.recordId);
-    selection.value = active;
-    printJob.value = job;
-    status.value = "已加载 " + printJob.value.documents.length + " 条记录";
     await nextTick();
     await waitForDesignerReady();
     if (candidateRender) await candidateRender.catch(() => undefined);
     await assertCurrentContext(active, revision);
-    await loadTemplateAndPreview(job, active, revision);
+    await loadTemplateAndPreview(null, active, revision, undefined, preloadedTemplates, initialRecordError);
   } catch (cause) {
     if (revision === contextRevision) {
       error.value = cause instanceof Error ? cause.message : "读取飞书数据失败";
@@ -716,27 +753,46 @@ async function exitBatchMode() {
   }
 }
 
+async function readTemplateCollection(active: FeishuSelection) {
+  let collection: TemplateCollection = { templates: [], defaultId: null, revision: null };
+  let warning: string | null = null;
+  try {
+    if (sharedTemplateBridge && !isTableViewHost) await ensureSharedTemplateMigration({ baseId: active.baseId, tableId: active.tableId });
+    collection = await templateRepository.list({ baseId: active.baseId, tableId: active.tableId });
+    if (sharedTemplateBridge && isTableViewHost && collection.revision === null) {
+      throw new Error("请先在记录详情入口连接共享模板，完成本表旧模板接入后再打开此视图");
+    }
+  } catch (cause) {
+    if (sharedTemplateBridge) throw cause;
+    warning = cause instanceof Error ? cause.message : "模板集合读取失败";
+  }
+  return { collection, warning };
+}
+
 async function loadTemplateAndPreview(
   job = printJob.value,
   active = selection.value,
   revision = contextRevision,
   requestedId?: string | null,
+  preloadedTemplates?: Awaited<ReturnType<typeof readTemplateCollection>>,
+  initialRecordError = "",
 ): Promise<boolean> {
-  if (!designerRef.value || !job || !active) return false;
+  if (!designerRef.value || !active) return false;
   busy.value = true;
   error.value = "";
   try {
-    let collection: TemplateCollection = { templates: [], defaultId: null, revision: null };
-    let warning: string | null = null;
-    try {
-      collection = await templateRepository.list({ baseId: active.baseId, tableId: active.tableId });
-    } catch (cause) {
-      warning = cause instanceof Error ? cause.message : "模板集合读取失败";
-    }
+    let { collection, warning } = preloadedTemplates ?? await readTemplateCollection(active);
     const id = requestedId === undefined ? collection.defaultId : requestedId;
     const stored = collection.templates.find((item) => item.id === id) ?? null;
     if (id && id !== "automatic" && !stored) throw new Error("所选模板已不存在，请重新加载");
     await assertCurrentContext(active, revision);
+    if (!job) {
+      templateCollection.value = collection;
+      storedTemplate.value = stored;
+      selectedTemplateId.value = stored?.id ?? "automatic";
+      templateLoaded.value = true;
+      templateSaveAllowed.value = false;
+    }
     let selectedJob = job;
     let savedBatch: BatchPrintSession | null = null;
     let batchRestoreWarning = "";
@@ -756,6 +812,38 @@ async function loadTemplateAndPreview(
         selectedJob = job;
         batchRestoreWarning = cause instanceof Error ? cause.message : "保存的打印记录无法读取";
       }
+    }
+    // Saved batches do not depend on the unrelated current/first record being readable.
+    if (!selectedJob && !initialRecordError) {
+      const ids = getCurrentRecordIds(active);
+      if (ids.length) {
+        try {
+          selectedJob = await loadPrintJob(active, ids);
+          await assertCurrentContext(active, revision);
+        } catch (cause) {
+          await assertCurrentContext(active, revision);
+          initialRecordError = cause instanceof Error ? cause.message : "读取当前记录失败";
+        }
+      }
+    }
+    if (!selectedJob) {
+      await assertCurrentContext(active, revision);
+      templateCollection.value = collection;
+      storedTemplate.value = stored;
+      selectedTemplateId.value = stored?.id ?? "automatic";
+      templateLoaded.value = true;
+      templateSaveAllowed.value = false;
+      printJob.value = null;
+      renderedPages.value = null;
+      previewHtml.value = "";
+      previewError.value = "";
+      batchSession.value = createSinglePrintSession(null);
+      templateWarning.value = batchRestoreWarning || warning || "";
+      error.value = initialRecordError;
+      status.value = initialRecordError
+        ? "模板已加载，记录读取失败；请重试"
+        : isTableViewHost ? "模板已加载，当前数据视图暂无记录" : "模板已加载，当前未选择记录";
+      return true;
     }
     const singleTemplate = stored
       ? ensureBatchLayout(
@@ -1282,7 +1370,11 @@ async function changeBatchLayout(mode: BatchLayoutMode) {
 async function selectTemplate(id: string): Promise<boolean> {
   if (workspaceMode.value !== "preview" || !templateLoaded.value
     || !selection.value || !designerRef.value
-    || !printJob.value || busy.value) return false;
+    || busy.value) return false;
+  if (!printJob.value) {
+    return await loadTemplateAndPreview(null, selection.value, contextRevision, id,
+      { collection: templateCollection.value, warning: null });
+  }
   closeTransientMenus();
   const designer = designerRef.value;
   const previousJob = printJob.value;
@@ -1920,6 +2012,7 @@ async function exportPdf() {
 }
 
 onMounted(() => {
+  window.addEventListener("message", handleSharedTemplateMessage);
   window.addEventListener("duowei-print:designer-load-error", handleDesignerLoadError);
   window.addEventListener("message", handleAutomationConnectionMessage);
   document.addEventListener("pointerdown", handleGlobalPointerDown);
@@ -1933,6 +2026,7 @@ onMounted(() => {
   });
   if (designerRef.value?.isReady) markDesignerReady();
   stopSelectionWatch = bitable.base.onSelectionChange(({ data }) => {
+    if (isTableViewHost && selection.value && data.baseId === selection.value.baseId && data.tableId === selection.value.tableId && data.viewId === selection.value.viewId) return;
     if (!selection.value || sameContext(selection.value, data)) return;
     if (shouldIgnorePendingSelectionChange({
       hasPendingExplicitLoad: decisionDialog.value === "context" && pendingLoadRequest.value !== null,
@@ -1960,6 +2054,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("message", handleSharedTemplateMessage);
+  sharedTemplateBridge?.dispose();
   window.removeEventListener("duowei-print:designer-load-error", handleDesignerLoadError);
   window.removeEventListener("message", handleAutomationConnectionMessage);
   document.removeEventListener("pointerdown", handleGlobalPointerDown);
@@ -1987,6 +2083,7 @@ onBeforeUnmount(() => {
         <span class="brand-mark" aria-hidden="true">印</span>
         <h1>多维打印</h1>
       </div>
+      <button v-if="sharedTemplateBridge && error" class="button button-secondary" :disabled="busy" @click="connectSharedTemplates">连接共享模板</button>
     </header>
 
     <div v-if="showStatusFeedback" class="status-line" :class="{ 'status-line-error': hasFeedbackError, 'status-line-loading': busy && !hasFeedbackError }"
@@ -2176,7 +2273,7 @@ onBeforeUnmount(() => {
               <span aria-hidden="true">←</span> 返回{{ isBatchMode ? "批量预览" : "预览" }}
             </button>
             <button v-if="presentation.showRecordPicker" class="button button-secondary button-record-picker"
-              :disabled="busy || !templateLoaded" @click="requestLoadRecords(true)">
+              :disabled="busy || !templateLoaded || !printJob" @click="requestLoadRecords(true)">
               {{ batchWorkspaceActions.selectLabel }}
             </button>
             <button v-if="presentation.showExitBatch" class="button button-tertiary" :disabled="busy"
@@ -2211,10 +2308,15 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div v-else class="preview-empty">
-              <strong>{{ previewError ? '打印预览生成失败' : '正在生成打印预览' }}</strong>
+              <template v-if="!printJob && !busy">
+                <label v-if="isTableViewHost">数据视图 <select v-model="selectedSourceView" aria-label="数据视图"><option v-for="view in sourceViews" :key="view.id" :value="view.id">{{ view.name }}</option></select></label>
+                <button class="button button-secondary" @click="requestLoadRecords(false)">重试加载</button>
+                <button v-if="isTableViewHost" class="button button-secondary" :disabled="!selectedSourceView" @click="selectInitialTableRecord().catch(cause => error = cause instanceof Error ? cause.message : '记录选择失败')">选择打印记录</button>
+              </template>
+              <strong>{{ previewError ? '打印预览生成失败' : !printJob && !busy ? (error ? '数据加载失败' : isTableViewHost ? '当前数据视图暂无记录' : '当前未选择记录') : '正在生成打印预览' }}</strong>
               <span v-if="previewError">{{ previewError }}</span>
-              <span v-else-if="!templateLoaded">读取当前记录与模板中</span>
-              <span v-else>切回此标签页后，预览会继续生成</span>
+              <span v-else-if="!templateLoaded && (printJob || busy)">读取当前记录与模板中</span>
+              <span v-else-if="printJob || busy">切回此标签页后，预览会继续生成</span>
               <button v-if="previewError" class="button button-outline" :disabled="busy" @click="previewOutput">重试预览</button>
             </div>
           </section>
